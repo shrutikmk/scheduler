@@ -4,18 +4,154 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Day scheduler</title>
+  <script>
+    // Paint the correct theme before first paint to avoid a flash. The full
+    // controller (in the body) handles persistence + auto-by-time updates.
+    (function () {
+      try {
+        var saved = localStorage.getItem("scheduler-theme-mode") || "auto";
+        var theme;
+        if (saved === "light" || saved === "dark") {
+          theme = saved;
+        } else {
+          var h = new Date().getHours();
+          theme = h >= 7 && h < 19 ? "light" : "dark";
+        }
+        document.documentElement.dataset.theme = theme;
+      } catch (_) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
   <style>
+    /* Light theme — warm linen/ivory palette, slate text. Easier on eyes than stark white + cool slate. */
     :root {
-      --border: #e5e7eb;
-      --bg: #f8fafc;
-      --panel: #ffffff;
-      --soft: #f3f6fb;
-      --text: #111827;
-      --muted: #6b7280;
-      --accent: #2563eb;
-      --accent-soft: #dbeafe;
-      --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+      color-scheme: light;
+      --bg: #f6f3ec;
+      --panel: #fdfaf3;
+      --panel-translucent: rgba(253, 250, 243, 0.86);
+      --soft: #efeae0;
+      --border: #e3dccc;
+      --border-soft: #ece6d8;
+      --text: #2c2a25;
+      --muted: #74695a;
+      --accent: #3163a3;
+      --accent-soft: #dde6f1;
+      --accent-strong: #244c80;
+      --on-accent: #ffffff;
+      --bg-spot: rgba(49, 99, 163, 0.07);
+      --shadow: 0 18px 45px rgba(75, 60, 40, 0.10);
+      --shadow-soft: 0 8px 24px rgba(75, 60, 40, 0.07);
+      --chat-bg-from: rgba(253, 250, 243, 0.62);
+      --chat-bg-to: rgba(246, 243, 236, 0.92);
+      --user-msg-from: #e6edf7;
+      --user-msg-to: #f1f4f9;
+      --user-msg-border: #c7d4e8;
+      --assist-msg-bg: #fdfaf3;
+      --action-btn-bg: rgba(253, 250, 243, 0.85);
+      --action-btn-border: #d3ccbb;
+      --action-btn-color: #4a4538;
+      --action-btn-hover: #efeae0;
+      --thinking-bg: #efeae0;
+      --thinking-border: #ddd4c2;
+      --thinking-color: #5d564a;
+      --thinking-label: #8b8270;
+      --input-bg: #fffdf6;
+      --input-border: #ccc3ae;
+      --input-focus-border: #8aa9d4;
+      --input-focus-ring: rgba(49, 99, 163, 0.18);
+      --pill-online-bg: #dfeed4;
+      --pill-online-border: #a5c98a;
+      --pill-online-color: #3a5618;
+      --pill-offline-bg: #f4d8cc;
+      --pill-offline-border: #d99a82;
+      --pill-offline-color: #8b3814;
+      --pill-default-border: #d3ccbb;
+      --warn-bg: #fceadf;
+      --warn-bg-hover: #f5d8c5;
+      --warn-border: #e8b8a4;
+      --warn-border-hover: #d99a82;
+      --warn-text: #9b3d1e;
+      --success-bg: #e0efd4;
+      --success-bg-hover: #cee3bc;
+      --success-border: #b9d394;
+      --success-text: #3d5a16;
+      --task-card-bg: rgba(253, 250, 243, 0.95);
+      --task-card-pending-bar: var(--accent);
+      --task-card-done-bar: #5a8233;
+      --task-card-cancel-bar: #a39a86;
+      --button-bg: #f1ede2;
+      --button-border: #d3ccbb;
+      --button-hover-bg: #e2dccc;
+      --button-text: #3a342a;
+      --empty-border: #cdc4b0;
+      --status-text: #74695a;
     }
+
+    /* Dark theme — warm near-black + amber accent. Avoids pure black/white halation, less melatonin disruption at night. */
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #1a1d24;
+      --panel: #23272f;
+      --panel-translucent: rgba(35, 39, 47, 0.80);
+      --soft: #2c313b;
+      --border: #3a4150;
+      --border-soft: #2f3540;
+      --text: #dde2eb;
+      --muted: #94a0b3;
+      --accent: #e8b675;
+      --accent-soft: #3a2c19;
+      --accent-strong: #d49b51;
+      --on-accent: #1a1208;
+      --bg-spot: rgba(232, 182, 117, 0.08);
+      --shadow: 0 18px 45px rgba(0, 0, 0, 0.55);
+      --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.38);
+      --chat-bg-from: rgba(35, 39, 47, 0.55);
+      --chat-bg-to: rgba(26, 29, 36, 0.92);
+      --user-msg-from: #2b3142;
+      --user-msg-to: #232838;
+      --user-msg-border: #3d4659;
+      --assist-msg-bg: #262a33;
+      --action-btn-bg: rgba(50, 56, 67, 0.85);
+      --action-btn-border: #424a5a;
+      --action-btn-color: #c5cdda;
+      --action-btn-hover: #353c48;
+      --thinking-bg: #1f242d;
+      --thinking-border: #353c48;
+      --thinking-color: #95a0b3;
+      --thinking-label: #6a7488;
+      --input-bg: #1d2129;
+      --input-border: #3a4150;
+      --input-focus-border: #c79a5e;
+      --input-focus-ring: rgba(232, 182, 117, 0.22);
+      --pill-online-bg: #1f3a26;
+      --pill-online-border: #3e6f4a;
+      --pill-online-color: #b3dab4;
+      --pill-offline-bg: #3a201a;
+      --pill-offline-border: #7a3d2e;
+      --pill-offline-color: #f1b8a0;
+      --pill-default-border: #3a4150;
+      --warn-bg: #3a2018;
+      --warn-bg-hover: #4a2820;
+      --warn-border: #7a3d2e;
+      --warn-border-hover: #9b5238;
+      --warn-text: #f0a98a;
+      --success-bg: #1f3a1f;
+      --success-bg-hover: #2a4a2a;
+      --success-border: #3e6f3e;
+      --success-text: #a8d99c;
+      --task-card-bg: rgba(35, 39, 47, 0.95);
+      --task-card-pending-bar: var(--accent);
+      --task-card-done-bar: #6fa75e;
+      --task-card-cancel-bar: #5a6172;
+      --button-bg: #2c313b;
+      --button-border: #3a4150;
+      --button-hover-bg: #353c48;
+      --button-text: #c5cdda;
+      --empty-border: #3a4150;
+      --status-text: #94a0b3;
+    }
+
     * { box-sizing: border-box; }
     html, body {
       height: 100%;
@@ -23,8 +159,9 @@
       font-family: system-ui, -apple-system, sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 32rem),
+        radial-gradient(circle at top right, var(--bg-spot), transparent 32rem),
         var(--bg);
+      transition: background-color 0.4s ease, color 0.4s ease;
     }
     .grid {
       display: grid;
@@ -45,8 +182,9 @@
       font-weight: 600;
       font-size: 0.95rem;
       border-bottom: 1px solid var(--border);
-      background: rgba(255, 255, 255, 0.82);
+      background: var(--panel-translucent);
       backdrop-filter: blur(14px);
+      color: var(--text);
     }
     .col-header.flex-head {
       display: flex;
@@ -59,40 +197,71 @@
       font-size: 0.75rem;
       padding: 0.15rem 0.45rem;
       border-radius: 999px;
-      border: 1px solid #ddd;
+      border: 1px solid var(--pill-default-border);
+      background: var(--soft);
+      color: var(--muted);
       white-space: nowrap;
       max-width: 55%;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     .llm-pill.online {
-      background: #e8f5e9;
-      border-color: #a5d6a7;
-      color: #1b5e20;
+      background: var(--pill-online-bg);
+      border-color: var(--pill-online-border);
+      color: var(--pill-online-color);
     }
     .llm-pill.offline {
-      background: #ffebee;
-      border-color: #ef9a9a;
-      color: #b71c1c;
+      background: var(--pill-offline-bg);
+      border-color: var(--pill-offline-border);
+      color: var(--pill-offline-color);
     }
     .btn-clear-day {
       font-size: 0.72rem;
       font-weight: 600;
       padding: 0.2rem 0.45rem;
       border-radius: 8px;
-      border: 1px solid #fecaca;
-      background: #fff;
-      color: #b91c1c;
+      border: 1px solid var(--warn-border);
+      background: var(--panel);
+      color: var(--warn-text);
       cursor: pointer;
       white-space: nowrap;
     }
     .btn-clear-day:hover {
-      background: #fef2f2;
-      border-color: #f87171;
+      background: var(--warn-bg);
+      border-color: var(--warn-border-hover);
     }
     .btn-clear-day:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.15rem;
+      padding: 0.12rem;
+      border-radius: 999px;
+      background: var(--soft);
+      border: 1px solid var(--border);
+    }
+    .theme-toggle button {
+      padding: 0.18rem 0.55rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      line-height: 1;
+    }
+    .theme-toggle button:hover {
+      color: var(--text);
+    }
+    .theme-toggle button.active {
+      background: var(--panel);
+      border-color: var(--border);
+      color: var(--text);
+      box-shadow: var(--shadow-soft);
     }
     .col-body {
       flex: 1 1 auto;
@@ -104,7 +273,7 @@
       height: 100%;
       border: none;
       display: block;
-      background: #fff;
+      background: var(--panel);
     }
     #agenda-body {
       padding: 0.85rem;
@@ -125,19 +294,20 @@
       border: 1px solid var(--border);
       border-radius: 14px;
       padding: 0.75rem 0.8rem;
-      background: rgba(255, 255, 255, 0.92);
-      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.05);
+      background: var(--task-card-bg);
+      box-shadow: var(--shadow-soft);
+      color: var(--text);
     }
     .task-card.pending {
-      border-left: 4px solid var(--accent);
+      border-left: 4px solid var(--task-card-pending-bar);
     }
     .task-card.done {
       opacity: 0.72;
-      border-left: 4px solid #16a34a;
+      border-left: 4px solid var(--task-card-done-bar);
     }
     .task-card.cancelled {
       opacity: 0.6;
-      border-left: 4px solid #9ca3af;
+      border-left: 4px solid var(--task-card-cancel-bar);
     }
     .task-card-top {
       display: flex;
@@ -172,21 +342,20 @@
       display: inline-grid;
       place-items: center;
       padding: 0;
-      color: #15803d;
-      background: #dcfce7;
-      border: 1px solid #86efac;
+      color: var(--success-text);
+      background: var(--success-bg);
+      border: 1px solid var(--success-border);
       border-radius: 999px;
       font-size: 1rem;
       line-height: 1;
+      cursor: pointer;
     }
     .task-complete-btn:hover {
-      color: #166534;
-      background: #bbf7d0;
+      background: var(--success-bg-hover);
     }
     .task-complete-btn:disabled {
-      color: #94a3b8;
-      background: #f1f5f9;
-      border-color: #cbd5e1;
+      opacity: 0.55;
+      cursor: not-allowed;
     }
     .task-meta {
       display: flex;
@@ -202,10 +371,10 @@
       padding: 0.12rem 0.45rem;
     }
     .empty-card {
-      border: 1px dashed #cbd5e1;
+      border: 1px dashed var(--empty-border);
       border-radius: 14px;
       color: var(--muted);
-      background: rgba(255, 255, 255, 0.7);
+      background: var(--panel-translucent);
       padding: 0.75rem;
       line-height: 1.4;
     }
@@ -214,8 +383,8 @@
       overflow: auto;
       padding: 1rem 0.9rem;
       background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(248, 250, 252, 0.92)),
-        #f8fafc;
+        linear-gradient(180deg, var(--chat-bg-from), var(--chat-bg-to)),
+        var(--bg);
     }
     .msg {
       margin-bottom: 0.8rem;
@@ -226,19 +395,20 @@
       line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
-      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      box-shadow: var(--shadow-soft);
+      color: var(--text);
     }
     .msg.user {
       margin-left: auto;
-      background: linear-gradient(135deg, #dbeafe, #eff6ff);
-      border: 1px solid #bfdbfe;
+      background: linear-gradient(135deg, var(--user-msg-from), var(--user-msg-to));
+      border: 1px solid var(--user-msg-border);
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
     }
     .msg.assistant {
       margin-right: auto;
-      background: #fff;
+      background: var(--assist-msg-bg);
       border: 1px solid var(--border);
       display: flex;
       flex-direction: column;
@@ -255,33 +425,33 @@
       font-size: 0.72rem;
       padding: 0.14rem 0.46rem;
       cursor: pointer;
-      background: rgba(255, 255, 255, 0.75);
-      border: 1px solid #d1d5db;
+      background: var(--action-btn-bg);
+      border: 1px solid var(--action-btn-border);
       border-radius: 999px;
-      color: #374151;
+      color: var(--action-btn-color);
     }
     .msg.user .msg-action-btn {
-      background: rgba(255, 255, 255, 0.9);
+      background: var(--action-btn-bg);
     }
     .msg-action-btn:hover {
-      background: #f0f0f0;
+      background: var(--action-btn-hover);
     }
     .msg-body-content {
       white-space: pre-wrap;
       word-break: break-word;
     }
     .msg-thinking {
-      color: #64748b;
+      color: var(--thinking-color);
       font-size: 0.82rem;
       line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
       max-height: 10rem;
       overflow: hidden;
-      border: 1px solid #e2e8f0;
+      border: 1px solid var(--thinking-border);
       border-radius: 14px;
       padding: 0.55rem 0.65rem;
-      background: #f8fafc;
+      background: var(--thinking-bg);
       transition:
         opacity 0.48s ease,
         max-height 0.52s ease,
@@ -292,7 +462,7 @@
     .msg-thinking::before {
       content: "Thinking";
       display: block;
-      color: #94a3b8;
+      color: var(--thinking-label);
       font-size: 0.68rem;
       font-weight: 700;
       text-transform: uppercase;
@@ -315,8 +485,8 @@
       flex: 0 0 auto;
       border-top: 1px solid var(--border);
       padding: 0.7rem;
-      background: rgba(255, 255, 255, 0.9);
-      box-shadow: 0 -10px 28px rgba(15, 23, 42, 0.05);
+      background: var(--panel-translucent);
+      box-shadow: 0 -10px 28px var(--shadow-soft);
       display: flex;
       flex-direction: column;
       gap: 0.35rem;
@@ -329,17 +499,22 @@
       padding: 0.65rem 0.75rem;
       font-family: inherit;
       font-size: 0.9rem;
-      border: 1px solid #cbd5e1;
+      border: 1px solid var(--input-border);
       border-radius: 16px;
-      background: #fff;
+      background: var(--input-bg);
+      color: var(--text);
       outline: none;
-      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
     }
     .chat-compose textarea:focus {
-      border-color: #93c5fd;
+      border-color: var(--input-focus-border);
       box-shadow:
-        0 0 0 3px rgba(37, 99, 235, 0.12),
-        inset 0 1px 2px rgba(15, 23, 42, 0.04);
+        0 0 0 3px var(--input-focus-ring),
+        inset 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
+    .chat-compose textarea::placeholder {
+      color: var(--muted);
+      opacity: 0.85;
     }
     .chat-row {
       display: flex;
@@ -349,27 +524,33 @@
     button {
       padding: 0.4rem 0.75rem;
       cursor: pointer;
-      background: #f8fafc;
-      border: 1px solid #cbd5e1;
+      background: var(--button-bg);
+      border: 1px solid var(--button-border);
       border-radius: 999px;
       font-size: 0.85rem;
+      color: var(--button-text);
     }
-    button:hover { background: #e5e5e5; }
-    button.primary { background: #2563eb; color: #fff; border-color: #1d4ed8; }
-    button.primary:hover { background: #1d4ed8; }
+    button:hover { background: var(--button-hover-bg); }
+    button.primary {
+      background: var(--accent);
+      color: var(--on-accent);
+      border-color: var(--accent-strong);
+    }
+    button.primary:hover { background: var(--accent-strong); }
     button:disabled {
       opacity: 0.55;
       cursor: not-allowed;
     }
     .status {
       font-size: 0.8rem;
-      color: var(--muted);
+      color: var(--status-text);
       min-height: 1rem;
     }
     .subhead {
       font-size: 0.8rem;
       font-weight: 600;
-      color: #444;
+      color: var(--text);
+      opacity: 0.78;
       margin: 0.8rem 0 0.45rem;
       text-transform: uppercase;
       letter-spacing: 0.03em;
@@ -378,7 +559,7 @@
       list-style: none;
       padding: 0;
       margin: 0 0 0.75rem;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--border-soft);
       padding-bottom: 0.65rem;
     }
     #habits-from-builder-list li {
@@ -451,9 +632,22 @@
     <section class="col">
       <div class="col-header flex-head">
         <span>Day planner chat</span>
-        <span class="llm-pill muted" id="llm-status-pill" title="mlx_llm_gateway.py">LLM …</span>
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end">
+          <div
+            class="theme-toggle"
+            role="group"
+            aria-label="Theme"
+            id="theme-toggle"
+            title="Auto follows local time (light by day, dark at night)"
+          >
+            <button type="button" data-theme-mode="auto">Auto</button>
+            <button type="button" data-theme-mode="light" aria-label="Light theme">☀</button>
+            <button type="button" data-theme-mode="dark" aria-label="Dark theme">☾</button>
+          </div>
+          <span class="llm-pill muted" id="llm-status-pill" title="mlx_llm_gateway.py">LLM …</span>
+        </div>
       </div>
-      <div class="col-body" style="display:flex;flex-direction:column;background:#f5f5f5">
+      <div class="col-body" style="display:flex;flex-direction:column;background:var(--bg)">
         <div id="chat-scroll" aria-live="polite"></div>
         <div class="chat-compose">
           <div class="status" id="chat-status"></div>
@@ -469,6 +663,86 @@
 
   <script>
 (function () {
+  // ---------------------------------------------------------------------------
+  // Theme controller — light by day, dark at night, with manual override.
+  // Mode is stored in localStorage as "auto" | "light" | "dark". The early head
+  // script already painted a best-effort theme; here we wire the toggle UI,
+  // re-evaluate on a 60-second tick, and broadcast the resolved theme to the
+  // habit-builder iframe via postMessage so both panes stay consistent.
+  // ---------------------------------------------------------------------------
+  const THEME_LS_KEY = "scheduler-theme-mode";
+  const DAY_START_HOUR = 7; // 07:00 local — light theme begins
+  const DAY_END_HOUR = 19; // 19:00 local — dark theme begins
+  const themeToggleEl = document.getElementById("theme-toggle");
+  const habitsFrameElEarly = document.getElementById("habits-frame");
+
+  /** @returns {"light" | "dark"} */
+  function autoThemeNow() {
+    const h = new Date().getHours();
+    return h >= DAY_START_HOUR && h < DAY_END_HOUR ? "light" : "dark";
+  }
+
+  function readMode() {
+    try {
+      const raw = localStorage.getItem(THEME_LS_KEY);
+      if (raw === "light" || raw === "dark" || raw === "auto") return raw;
+    } catch (_) {}
+    return "auto";
+  }
+
+  /** Apply ``theme`` to <html> and notify the iframe. */
+  function applyTheme(theme) {
+    const t = theme === "dark" ? "dark" : "light";
+    if (document.documentElement.dataset.theme !== t) {
+      document.documentElement.dataset.theme = t;
+    }
+    try {
+      const frame = habitsFrameElEarly || document.getElementById("habits-frame");
+      if (frame && frame.contentWindow) {
+        frame.contentWindow.postMessage(
+          { source: "scheduler-shell", type: "theme", theme: t },
+          window.location.origin,
+        );
+      }
+    } catch (_) {}
+  }
+
+  function resolveAndApply() {
+    const mode = readMode();
+    applyTheme(mode === "auto" ? autoThemeNow() : mode);
+    refreshThemeToggleChrome(mode);
+  }
+
+  function refreshThemeToggleChrome(mode) {
+    if (!themeToggleEl) return;
+    const buttons = themeToggleEl.querySelectorAll("button[data-theme-mode]");
+    buttons.forEach(function (b) {
+      const m = b.getAttribute("data-theme-mode");
+      b.classList.toggle("active", m === mode);
+      b.setAttribute("aria-pressed", m === mode ? "true" : "false");
+    });
+  }
+
+  if (themeToggleEl) {
+    themeToggleEl.addEventListener("click", function (ev) {
+      const target = ev.target;
+      if (!(target instanceof HTMLElement)) return;
+      const btn = target.closest("button[data-theme-mode]");
+      if (!btn) return;
+      const mode = btn.getAttribute("data-theme-mode") || "auto";
+      try {
+        localStorage.setItem(THEME_LS_KEY, mode);
+      } catch (_) {}
+      resolveAndApply();
+    });
+  }
+
+  resolveAndApply();
+  setInterval(resolveAndApply, 60_000);
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) resolveAndApply();
+  });
+
   const chatScroll = document.getElementById("chat-scroll");
   const agendaList = document.getElementById("agenda-list");
   const agendaFallback = document.getElementById("agenda-fallback-pre");
@@ -1301,7 +1575,35 @@
         }
 
         refreshLlmSchedule(fullAssistant);
+        if (evt.ok !== false) setBusy(false);
         if (historyUpdated) rerenderChatFromHistory();
+      }
+
+      function applyReplacementEvent(evt) {
+        let historyUpdated = false;
+        if (Array.isArray(evt.history)) {
+          chatHistory = evt.history.filter(function (h) {
+            return (
+              h &&
+              (h.role === "user" || h.role === "assistant") &&
+              typeof h.content === "string"
+            );
+          });
+          historyUpdated = true;
+        }
+        if (typeof evt.assistant === "string" && evt.assistant) fullAssistant = evt.assistant;
+        streamedChat = "";
+        fadeThinkingAway(shell);
+        if (typeof evt.chat === "string" && evt.chat.trim()) {
+          shell.body.textContent = displayTextForMessage("assistant", evt.chat);
+        } else if (fullAssistant) {
+          shell.body.textContent = displayTextForMessage("assistant", fullAssistant);
+        }
+        refreshLlmSchedule(fullAssistant);
+        if (historyUpdated) rerenderChatFromHistory();
+        if (typeof evt.reason === "string" && evt.reason) {
+          statusEl.textContent = "Plan refined by fallback model: " + evt.reason;
+        }
       }
 
       readLoop: while (true) {
@@ -1313,6 +1615,8 @@
               const evt = JSON.parse(tail);
               if (evt.type === "done") {
                 applyDoneEvent(evt);
+              } else if (evt.type === "replacement") {
+                applyReplacementEvent(evt);
               }
             } catch (_) {}
           }
@@ -1350,10 +1654,9 @@
           }
           if (evt.type === "done") {
             applyDoneEvent(evt);
-            try {
-              await reader.cancel();
-            } catch (_) {}
-            break readLoop;
+          }
+          if (evt.type === "replacement") {
+            applyReplacementEvent(evt);
           }
         }
       }
@@ -1437,6 +1740,18 @@
   if (habitsFrameEl) {
     habitsFrameEl.addEventListener("load", function () {
       void syncHabitsFromStorage();
+      try {
+        if (habitsFrameEl.contentWindow) {
+          habitsFrameEl.contentWindow.postMessage(
+            {
+              source: "scheduler-shell",
+              type: "theme",
+              theme: document.documentElement.dataset.theme || "light",
+            },
+            window.location.origin,
+          );
+        }
+      } catch (_) {}
     });
   }
 

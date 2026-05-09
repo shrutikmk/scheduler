@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         resolved = resolve_model_arg(ns.model)
         return run_diagnose(resolved)
 
-    model_o, _, err = ensure_model_loaded(model=ns.model)
+    model_o, _, err = ensure_model_loaded(model=ns.cheap_model or ns.model)
     if model_o is None:
         print(err, file=sys.stderr)
         return 2
@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"MLX LLM gateway → {api}", file=sys.stderr, flush=True)
     print(f"  GET  {api}health", file=sys.stderr, flush=True)
     print(f"  POST {api}v1/day-scheduler/chat", file=sys.stderr, flush=True)
-    resolved = resolve_model_arg(ns.model)
+    resolved = resolve_model_arg(ns.cheap_model or ns.model)
     print(
         "model:",
         resolved,

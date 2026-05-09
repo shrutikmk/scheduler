@@ -4,52 +4,173 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Habit Builder</title>
+  <script>
+    // Paint the correct theme before first paint. Priority:
+    //   1. ?theme=… query param (parent passes it on initial src)
+    //   2. local-time auto (07–19 → light, else dark) for standalone use
+    // Persisted parent overrides arrive later via postMessage (see body script).
+    (function () {
+      try {
+        var theme = "light";
+        var url = new URL(window.location.href);
+        var qp = url.searchParams.get("theme");
+        if (qp === "light" || qp === "dark") {
+          theme = qp;
+        } else {
+          var h = new Date().getHours();
+          theme = h >= 7 && h < 19 ? "light" : "dark";
+        }
+        document.documentElement.dataset.theme = theme;
+      } catch (_) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
   <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f3ec;
+      --panel: #fdfaf3;
+      --soft: #efeae0;
+      --border: #e3dccc;
+      --border-soft: #ece6d8;
+      --text: #2c2a25;
+      --muted: #74695a;
+      --accent: #3163a3;
+      --accent-soft: #dde6f1;
+      --accent-strong: #244c80;
+      --on-accent: #ffffff;
+      --button-bg: #f1ede2;
+      --button-border: #d3ccbb;
+      --button-hover-bg: #e2dccc;
+      --button-text: #3a342a;
+      --danger-text: #9b3d1e;
+      --input-bg: #fffdf6;
+      --input-border: #ccc3ae;
+      --bar-track: #e3dccc;
+      --bar-fill: #4f8a4a;
+      --done-bg: #cfead9;
+      --done-bg-other: #b8dec5;
+      --done-text: #1e4628;
+      --done-border: #97c0a6;
+      --rest-outline: #c9a227;
+      --cell-bg: #fffdf6;
+      --cell-border: #d8d2c2;
+      --cell-other-bg: #ece6d8;
+      --cell-other-text: #74695a;
+      --cell-other-border: #d3ccbb;
+      --active-row-bg: #e8efe6;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #1a1d24;
+      --panel: #23272f;
+      --soft: #2c313b;
+      --border: #3a4150;
+      --border-soft: #2f3540;
+      --text: #dde2eb;
+      --muted: #94a0b3;
+      --accent: #e8b675;
+      --accent-soft: #3a2c19;
+      --accent-strong: #d49b51;
+      --on-accent: #1a1208;
+      --button-bg: #2c313b;
+      --button-border: #3a4150;
+      --button-hover-bg: #353c48;
+      --button-text: #c5cdda;
+      --danger-text: #f0a98a;
+      --input-bg: #1d2129;
+      --input-border: #3a4150;
+      --bar-track: #2c313b;
+      --bar-fill: #6fa75e;
+      --done-bg: #1f3a1f;
+      --done-bg-other: #1b2f1b;
+      --done-text: #a8d99c;
+      --done-border: #3e6f3e;
+      --rest-outline: #c79a5e;
+      --cell-bg: #23272f;
+      --cell-border: #3a4150;
+      --cell-other-bg: #1f242d;
+      --cell-other-text: #94a0b3;
+      --cell-other-border: #3a4150;
+      --active-row-bg: #2a3140;
+    }
     * { box-sizing: border-box; }
     body {
       font-family: system-ui, -apple-system, sans-serif;
       max-width: 720px;
       margin: 1rem auto;
       padding: 0 1rem;
-      color: #1a1a1a;
+      color: var(--text);
+      background: var(--bg);
       line-height: 1.4;
+      transition: background-color 0.4s ease, color 0.4s ease;
     }
     h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
     .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
-    input[type="text"] { flex: 1; min-width: 12rem; padding: 0.4rem 0.5rem; }
+    input[type="text"],
+    input[type="date"] {
+      flex: 1;
+      min-width: 12rem;
+      padding: 0.4rem 0.5rem;
+      background: var(--input-bg);
+      color: var(--text);
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+    }
+    input[type="text"]:focus,
+    input[type="date"]:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
     button {
       padding: 0.4rem 0.75rem;
       cursor: pointer;
-      background: #eee;
-      border: 1px solid #ccc;
-      border-radius: 4px;
+      background: var(--button-bg);
+      border: 1px solid var(--button-border);
+      border-radius: 6px;
+      color: var(--button-text);
     }
-    button:hover { background: #e5e5e5; }
-    button.danger { color: #a00; }
-    .habits { list-style: none; padding: 0; margin: 0 0 1rem; border: 1px solid #ddd; border-radius: 4px; }
+    button:hover { background: var(--button-hover-bg); }
+    button.danger { color: var(--danger-text); }
+    .habits {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 1rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+    }
     .habits li {
       padding: 0.5rem 0.75rem;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--border-soft);
       cursor: pointer;
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 0.5rem;
+      color: var(--text);
     }
     .habits li:last-child { border-bottom: none; }
-    .habits li.active { background: #f0f7ff; }
-    .muted { color: #666; font-size: 0.85rem; }
-    .panel { border: 1px solid #ddd; border-radius: 4px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
+    .habits li.active { background: var(--active-row-bg); }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      background: var(--panel);
+    }
     .bar {
       height: 10px;
-      background: #e8e8e8;
+      background: var(--bar-track);
       border-radius: 5px;
       overflow: hidden;
       margin: 0.35rem 0;
     }
     .bar .fill {
       height: 100%;
-      background: #2a7;
+      background: var(--bar-fill);
       border-radius: 5px;
       width: 0%;
       transition: width 0.2s ease;
@@ -61,41 +182,45 @@
       gap: 2px;
       font-size: 0.8rem;
     }
-    .cal-grid .dow { text-align: center; font-weight: 600; padding: 0.25rem; color: #555; }
+    .cal-grid .dow { text-align: center; font-weight: 600; padding: 0.25rem; color: var(--muted); }
     .cal-grid .cell {
       aspect-ratio: 1;
-      border: 1px solid #e0e0e0;
+      border: 1px solid var(--cell-border);
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      background: #fff;
+      background: var(--cell-bg);
+      color: var(--text);
       border-radius: 4px;
     }
-    /* Adjacent month: light shell only — marked days use same green as in-month (.cell.other.done). */
     .cal-grid .cell.other {
-      background: #f2f3f5;
-      color: #5c5c5c;
+      background: var(--cell-other-bg);
+      color: var(--cell-other-text);
       border-style: dashed;
-      border-color: #d4d4d4;
+      border-color: var(--cell-other-border);
     }
     .cal-grid .cell.other.done {
-      background: #cfead9;
-      color: #1e4628;
+      background: var(--done-bg-other);
+      color: var(--done-text);
       font-weight: 600;
       border-style: solid;
-      border-color: #b0d4be;
+      border-color: var(--done-border);
       opacity: 1;
     }
     .cal-grid .cell.before-start { cursor: not-allowed; opacity: 0.45; }
     .cal-grid .cell.other.before-start { opacity: 0.55; }
-    .cal-grid .cell.done { background: #cfead9; font-weight: 600; }
-    .cal-grid .cell.rest-block { outline: 2px solid #c9a227; cursor: not-allowed; }
-    .rules { font-size: 0.8rem; color: #555; margin-top: 1rem; }
+    .cal-grid .cell.done {
+      background: var(--done-bg);
+      color: var(--done-text);
+      font-weight: 600;
+    }
+    .cal-grid .cell.rest-block { outline: 2px solid var(--rest-outline); cursor: not-allowed; }
+    .rules { font-size: 0.8rem; color: var(--muted); margin-top: 1rem; }
     .upcoming {
       margin: 0.5rem 0 0.75rem;
       padding: 0.5rem 0;
-      border-top: 1px solid #eee;
+      border-top: 1px solid var(--border-soft);
       font-size: 0.9rem;
     }
     .upcoming div { margin: 0.2rem 0; }
@@ -104,7 +229,7 @@
       align-items: center;
       gap: 0.35rem;
       font-size: 0.9rem;
-      color: #444;
+      color: var(--text);
     }
     .habit-list-hint {
       margin: 0 0 0.5rem;
@@ -194,6 +319,18 @@
 
   <script>
 (function () {
+  // Listen for theme messages from the parent shell (postMessage from
+  // day_scheduler.html). Same-origin only.
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== window.location.origin) return;
+    const d = ev.data;
+    if (!d || d.source !== "scheduler-shell" || d.type !== "theme") return;
+    const t = d.theme === "dark" ? "dark" : "light";
+    if (document.documentElement.dataset.theme !== t) {
+      document.documentElement.dataset.theme = t;
+    }
+  });
+
   const LEGACY_STORAGE_KEY = "scheduler-habit-builder";
   /** Synchronous JSON mirror of the same payload as IndexedDB — updated on every persist and on tab close. */
   const LOCAL_BACKUP_KEY = "scheduler-habit-builder-backup";
@@ -294,7 +431,7 @@
     if (!el) return;
     el.textContent = msg;
     el.classList.toggle("muted", ok);
-    el.style.color = ok ? "" : "#a00";
+    el.style.color = ok ? "" : "var(--danger-text)";
   }
 
   /** @type {{ id: string, title: string, start: string, days: Record<string, boolean> }[]} */

@@ -6,10 +6,12 @@ Loads the model in-process (Metal). Stateless per request besides the model sing
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sys
 import threading
+from dataclasses import dataclass
 from datetime import date
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -29,14 +31,34 @@ from mlx_chat_cli import (  # noqa: E402
 )
 from mlx_day_scheduler_pipeline import (  # noqa: E402
     REPO_ROOT,
+    build_prompt,
     chat_text_for_ui,
     generate_day_scheduler_reply,
     load_day_scheduler_system_prompt,
 )
+from response_quality import (  # noqa: E402
+    DEFAULT_EMBEDDING_MODEL_DIR,
+    DEFAULT_SIMILARITY_THRESHOLD,
+    embedding_similarity,
+    parse_self_grade,
+)
+from schedule_parse import validate_schedule_response  # noqa: E402
 
-_generation_lock = threading.Lock()
-_model_bundle: tuple[object, object] | None = None
-_bundle_model_str: str | None = None
+DEFAULT_CHEAP_MODEL = str(Path.home() / "models" / "Qwen3-8B")
+DEFAULT_EXPENSIVE_MODEL = str(Path.home() / "models" / "Qwen3-14B")
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="scheduler-llm")
+
+
+@dataclass
+class ModelBundle:
+    model: object
+    tokenizer: object
+    model_str: str
+    lock: threading.Lock
+
+
+_registry_lock = threading.Lock()
+_model_registry: dict[str, ModelBundle] = {}
 
 
 def _should_strip_reasoning_ui(*, force_strip: bool) -> bool:
@@ -74,15 +96,26 @@ def _finalize_sampling_defaults_ui(
     return temperature, top_p, top_k
 
 
-def ensure_model_loaded(
-    *, model: str | None
-) -> tuple[object, object, str] | tuple[None, None, str]:
-    """Return ``(model_m, tokenizer, resolved_path)`` or ``(None, None, errmsg)``."""
-    global _model_bundle, _bundle_model_str
-    model_str = resolve_model_arg(model)
-    with _generation_lock:
-        if _model_bundle is not None and _bundle_model_str == model_str:
-            return _model_bundle[0], _model_bundle[1], model_str
+def _resolve_role_model(model: str | None, *, role: str = "cheap") -> str:
+    if model and model.strip():
+        return model.strip()
+    if role == "expensive":
+        env = os.environ.get("SCHEDULER_EXPENSIVE_MODEL", "").strip()
+        return env or DEFAULT_EXPENSIVE_MODEL
+    env = os.environ.get("SCHEDULER_CHEAP_MODEL", "").strip()
+    return env or resolve_model_arg(None)
+
+
+def ensure_model_bundle_loaded(
+    *, model: str | None, role: str = "cheap"
+) -> tuple[ModelBundle, str] | tuple[None, str]:
+    """Return a named model bundle or ``(None, errmsg)``."""
+    model_str = _resolve_role_model(model, role=role)
+    key = f"{role}:{model_str}"
+    with _registry_lock:
+        existing = _model_registry.get(key)
+        if existing is not None:
+            return existing, model_str
 
         try:
             import mlx.core as mx
@@ -125,9 +158,19 @@ def ensure_model_loaded(
             return (None, None, f"load failed: {e}")
 
         mx.clear_cache()
-        _model_bundle = (model_m, tokenizer)
-        _bundle_model_str = model_str
-        return model_m, tokenizer, model_str
+        bundle = ModelBundle(model_m, tokenizer, model_str, threading.Lock())
+        _model_registry[key] = bundle
+        return bundle, model_str
+
+
+def ensure_model_loaded(
+    *, model: str | None
+) -> tuple[object, object, str] | tuple[None, None, str]:
+    """Backward-compatible cheap/default loader."""
+    bundle, model_str_or_err = ensure_model_bundle_loaded(model=model, role="cheap")
+    if bundle is None:
+        return None, None, model_str_or_err
+    return bundle.model, bundle.tokenizer, model_str_or_err
 
 
 def build_llm_gateway_handler(
@@ -152,12 +195,150 @@ def build_llm_gateway_handler(
     min_p: float,
     max_tokens_override: int | None,
     max_history_override: int | None,
+    cheap_model: str | None,
+    expensive_model: str | None,
+    embedding_model: str | None,
+    similarity_threshold: float,
+    background_reference: bool,
+    self_grade_threshold: float,
 ):
     summarize_keep_recent_eff = max(2, summarize_keep_recent)
     auto_summarize = not no_summarize
     max_tokens_eff = max(4096, int(max_tokens_override or 4096))
     env_hist = os.environ.get("MLX_DAY_SCHEDULER_UI_MAX_HISTORY", "0").strip()
     max_hist = max_history_override if max_history_override is not None else int(env_hist or "0")
+
+    def _make_sampler():
+        temp, top_p, top_k = _finalize_sampling_defaults_ui(
+            temperature=temperature_override if temperature_override is not None else None,
+            top_p=top_p_override if top_p_override is not None else None,
+            top_k=top_k_override if top_k_override is not None else None,
+            thinking=template_enable_thinking is True,
+        )
+        from mlx_lm.sample_utils import make_sampler as _mk
+
+        return _mk(temp=temp, top_p=top_p, min_p=min_p, top_k=top_k)
+
+    def _gen_kw(sampler_mod: object) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "sampler": sampler_mod,
+            "prefill_step_size": prefill_step_size,
+        }
+        if kv_bits > 0:
+            out["kv_bits"] = kv_bits
+            out["kv_group_size"] = kv_group_size
+            out["quantized_kv_start"] = quantized_kv_start
+        if max_kv_size is not None:
+            out["max_kv_size"] = max_kv_size
+        return out
+
+    def _run_scheduler_generation(
+        *,
+        role: str,
+        model_arg: str | None,
+        content: str,
+        pairs: list[tuple[str, str]],
+        host_context: str | None,
+        client_clock_minutes: int | None,
+        client_clock_date: date | None,
+        strip_reasoning: bool,
+        schedule_buffer: bool,
+        sampler_mod: object,
+        stream_callbacks: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        bundle, model_str_or_err = ensure_model_bundle_loaded(model=model_arg, role=role)
+        if bundle is None:
+            return {
+                "ok": False,
+                "assistant": "",
+                "history": pairs,
+                "error": model_str_or_err,
+                "model": model_arg or "",
+                "role": role,
+            }
+        ctx_limit = resolve_context_token_limit(
+            model_str=bundle.model_str,
+            tokenizer=bundle.tokenizer,
+            explicit=context_limit_explicit,
+        )
+        hist = [(r, t) for r, t in pairs]
+        callbacks = stream_callbacks or {}
+        with bundle.lock:
+            ok, assistant_text, _last_resp = generate_day_scheduler_reply(
+                user_raw=content.strip(),
+                history=hist,
+                model_m=bundle.model,
+                tokenizer=bundle.tokenizer,
+                base_system_prompt=base_system,
+                template_enable_thinking=template_enable_thinking,
+                context_limit=ctx_limit,
+                soft_fraction=min(0.92, max(0.25, float(context_soft_fraction))),
+                reserve_tokens=max_tokens_eff + 512,
+                keep_recent_messages=summarize_keep_recent_eff,
+                summarize_max_tokens=summarize_max_tokens,
+                max_summarize_input_tokens=summarize_max_input_tokens,
+                gen_kw=_gen_kw(sampler_mod),
+                auto_summarize=auto_summarize,
+                max_tokens=max_tokens_eff,
+                strip_reasoning=strip_reasoning,
+                buffer_full_reply=schedule_buffer,
+                max_history_messages=max_hist,
+                host_context=host_context,
+                client_clock_minutes=client_clock_minutes,
+                client_clock_date=client_clock_date,
+                on_stream_chunk=callbacks.get("chunk"),
+                on_stream_thinking=callbacks.get("thinking"),
+                on_thinking_closed=callbacks.get("thinking_closed"),
+                hide_schedule_deltas=True,
+                on_compress=None,
+            )
+        return {
+            "ok": ok,
+            "assistant": assistant_text,
+            "history": hist,
+            "error": None if ok else "MLX generation failed (see gateway terminal).",
+            "model": bundle.model_str,
+            "role": role,
+        }
+
+    def _self_grade_candidate(
+        *,
+        bundle: ModelBundle,
+        user_content: str,
+        host_context: str | None,
+        candidate: str,
+        sampler_mod: object,
+    ) -> tuple[bool, list[str]]:
+        prompt_user = (
+            "Grade this day-scheduler response for correctness. Check only format, chronology, "
+            "whether it follows hard facts/context, and whether the plan is sensible.\n\n"
+            f"USER:\n{user_content}\n\n"
+            f"HOST CONTEXT:\n{host_context or '(none)'}\n\n"
+            f"CANDIDATE:\n{candidate}\n\n"
+            'Return strict JSON only: {"pass": true, "score": 0.0, "reasons": []}'
+        )
+        grader_system = "You are a strict JSON-only validator for day-scheduler responses."
+        try:
+            from mlx_day_scheduler_pipeline import _generate_plain_completion
+
+            prompt = build_prompt(
+                bundle.tokenizer,
+                grader_system,
+                [("user", prompt_user)],
+                enable_thinking=False,
+            )
+            with bundle.lock:
+                raw = _generate_plain_completion(
+                    model_m=bundle.model,
+                    tokenizer=bundle.tokenizer,
+                    prompt=prompt,
+                    max_tokens=256,
+                    gen_kw=_gen_kw(sampler_mod),
+                )
+        except Exception as exc:
+            return False, [f"self-grade failed: {exc}"]
+        grade = parse_self_grade(raw, min_score=self_grade_threshold)
+        return grade.passed, list(grade.reasons)
 
     class SchedulerLlmGatewayHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -187,15 +368,16 @@ def build_llm_gateway_handler(
             if path != "/health":
                 self.send_error(404, "Not found")
                 return
-            loaded = _model_bundle is not None and _bundle_model_str is not None
-            model_resolved = resolve_model_arg(None)
             self._send_json(
                 200,
                 {
                     "status": "ok",
                     "service": "mlx-scheduler-llm",
-                    "model_loaded": loaded,
-                    "model": model_resolved,
+                    "model_loaded": bool(_model_registry),
+                    "model": _resolve_role_model(cheap_model, role="cheap"),
+                    "cheap_model": _resolve_role_model(cheap_model, role="cheap"),
+                    "expensive_model": _resolve_role_model(expensive_model, role="expensive"),
+                    "loaded_roles": sorted(_model_registry.keys()),
                     "default_hub_repo": DEFAULT_HUB_REPO,
                 },
             )
@@ -249,61 +431,12 @@ def build_llm_gateway_handler(
                     continue
                 pairs.append((str(role), txt))
 
-            model_o, tok_o, model_str_or_err = ensure_model_loaded(model=payload.get("model"))
-            if model_o is None:
-                msg = cast(str, model_str_or_err)
-                body_err = json.dumps({"type": "done", "ok": False, "error": msg}).encode()
-                self.send_response(500)
-                self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-                self.send_header("Content-Length", str(len(body_err)))
-                self.end_headers()
-                self.wfile.write(body_err)
-                self.wfile.write(b"\n")
-                return
-
-            model_str = cast(str, model_str_or_err)
-            model_m, tokenizer = cast(object, model_o), cast(object, tok_o)
-            mt = max_tokens_eff
-            reserve_tokens = int(payload.get("context_reserve_tokens") or (mt + 512))
             strip_reasoning = _should_strip_reasoning_ui(force_strip=strip_arg)
-
-            temp, top_p, top_k = _finalize_sampling_defaults_ui(
-                temperature=temperature_override if temperature_override is not None else None,
-                top_p=top_p_override if top_p_override is not None else None,
-                top_k=top_k_override if top_k_override is not None else None,
-                thinking=template_enable_thinking is True,
-            )
-
-            sampler_mod = None
             try:
-                from mlx_lm.sample_utils import make_sampler as _mk
-
-                sampler_mod = _mk(
-                    temp=temp,
-                    top_p=top_p,
-                    min_p=min_p,
-                    top_k=top_k,
-                )
+                sampler_mod = _make_sampler()
             except Exception as e:
                 self._send_json_error(500, f"sampler failed: {e}")
                 return
-
-            gen_kw: dict[str, Any] = {
-                "sampler": sampler_mod,
-                "prefill_step_size": prefill_step_size,
-            }
-            if kv_bits > 0:
-                gen_kw["kv_bits"] = kv_bits
-                gen_kw["kv_group_size"] = kv_group_size
-                gen_kw["quantized_kv_start"] = quantized_kv_start
-            if max_kv_size is not None:
-                gen_kw["max_kv_size"] = max_kv_size
-
-            ctx_limit = resolve_context_token_limit(
-                model_str=model_str,
-                tokenizer=tokenizer,
-                explicit=context_limit_explicit,
-            )
 
             hist = [(r, t) for r, t in pairs]
 
@@ -367,46 +500,119 @@ def build_llm_gateway_handler(
             stream_thinking_cb = None if strip_reasoning else on_thinking_chunk
             thinking_done_cb = on_thinking_closed if stream_thinking_cb else None
 
-            with _generation_lock:
-                ok, assistant_text, _last_resp = generate_day_scheduler_reply(
-                    user_raw=content.strip(),
-                    history=hist,
-                    model_m=model_m,
-                    tokenizer=tokenizer,
-                    base_system_prompt=base_system,
-                    template_enable_thinking=template_enable_thinking,
-                    context_limit=ctx_limit,
-                    soft_fraction=min(
-                        0.92,
-                        max(0.25, float(context_soft_fraction)),
-                    ),
-                    reserve_tokens=reserve_tokens,
-                    keep_recent_messages=summarize_keep_recent_eff,
-                    summarize_max_tokens=summarize_max_tokens,
-                    max_summarize_input_tokens=summarize_max_input_tokens,
-                    gen_kw=gen_kw,
-                    auto_summarize=auto_summarize,
-                    max_tokens=mt,
-                    strip_reasoning=strip_reasoning,
-                    buffer_full_reply=schedule_buffer,
-                    max_history_messages=max_hist,
+            cheap_model_arg = (
+                payload.get("model")
+                if isinstance(payload.get("model"), str)
+                else cheap_model
+            )
+            expensive_model_arg = (
+                payload.get("expensive_model")
+                if isinstance(payload.get("expensive_model"), str)
+                else expensive_model
+            )
+
+            cheap_bundle, cheap_model_or_err = ensure_model_bundle_loaded(
+                model=cheap_model_arg,
+                role="cheap",
+            )
+            if cheap_bundle is None:
+                body_err = json.dumps(
+                    {"type": "done", "ok": False, "error": cheap_model_or_err}
+                ).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                self.send_header("Content-Length", str(len(body_err)))
+                self.end_headers()
+                self.wfile.write(body_err)
+                self.wfile.write(b"\n")
+                return
+
+            expensive_future = None
+            if background_reference:
+                expensive_future = _executor.submit(
+                    _run_scheduler_generation,
+                    role="expensive",
+                    model_arg=expensive_model_arg,
+                    content=content,
+                    pairs=hist,
                     host_context=host_context,
                     client_clock_minutes=client_clock_minutes,
                     client_clock_date=client_clock_date,
-                    on_stream_chunk=on_chunk,
-                    on_stream_thinking=stream_thinking_cb,
-                    on_thinking_closed=thinking_done_cb,
-                    hide_schedule_deltas=True,
-                    on_compress=None,
+                    strip_reasoning=strip_reasoning,
+                    schedule_buffer=True,
+                    sampler_mod=sampler_mod,
+                    stream_callbacks=None,
                 )
 
+            cheap_result = _run_scheduler_generation(
+                role="cheap",
+                model_arg=cheap_model_arg,
+                content=content,
+                pairs=hist,
+                host_context=host_context,
+                client_clock_minutes=client_clock_minutes,
+                client_clock_date=client_clock_date,
+                strip_reasoning=strip_reasoning,
+                schedule_buffer=schedule_buffer,
+                sampler_mod=sampler_mod,
+                stream_callbacks={
+                    "chunk": on_chunk,
+                    "thinking": stream_thinking_cb,
+                    "thinking_closed": thinking_done_cb,
+                },
+            )
+
+            validation = validate_schedule_response(
+                str(cheap_result.get("assistant") or ""),
+                default_plan_date=client_clock_date.isoformat()
+                if client_clock_date is not None
+                else date.today().isoformat(),
+                client_minute_of_day=client_clock_minutes,
+                host_context=host_context,
+            )
+            cheap_ok = bool(cheap_result.get("ok")) and validation.ok
+            cheap_reasons = list(validation.reasons)
+            if cheap_ok:
+                graded_ok, grade_reasons = _self_grade_candidate(
+                    bundle=cheap_bundle,
+                    user_content=content.strip(),
+                    host_context=host_context,
+                    candidate=str(cheap_result.get("assistant") or ""),
+                    sampler_mod=sampler_mod,
+                )
+                cheap_ok = graded_ok
+                cheap_reasons.extend(grade_reasons)
+
+            chosen = cheap_result
+            if not cheap_ok:
+                if expensive_future is not None:
+                    chosen = expensive_future.result()
+                else:
+                    chosen = _run_scheduler_generation(
+                        role="expensive",
+                        model_arg=expensive_model_arg,
+                        content=content,
+                        pairs=hist,
+                        host_context=host_context,
+                        client_clock_minutes=client_clock_minutes,
+                        client_clock_date=client_clock_date,
+                        strip_reasoning=strip_reasoning,
+                        schedule_buffer=True,
+                        sampler_mod=sampler_mod,
+                        stream_callbacks=None,
+                    )
+
+            assistant_text = str(chosen.get("assistant") or "")
+            ok = bool(chosen.get("ok"))
             chat_line = (
                 chat_text_for_ui(assistant_full=assistant_text, user_raw=content.strip())
                 if ok
                 else ""
             )
 
-            serializable = [{"role": r, "content": c} for r, c in hist]
+            serializable = [
+                {"role": r, "content": c} for r, c in cast(list[tuple[str, str]], chosen["history"])
+            ]
             write_line(
                 {
                     "type": "done",
@@ -414,9 +620,73 @@ def build_llm_gateway_handler(
                     "assistant": assistant_text,
                     "chat": chat_line,
                     "history": serializable,
-                    "error": None if ok else "MLX generation failed (see gateway terminal).",
+                    "model_role": chosen.get("role"),
+                    "model": chosen.get("model"),
+                    "fast_validation_reasons": cheap_reasons,
+                    "error": None if ok else chosen.get("error"),
                 }
             )
+
+            if (
+                ok
+                and cheap_ok
+                and expensive_future is not None
+                and chosen.get("role") == "cheap"
+            ):
+                try:
+                    expensive_result = expensive_future.result()
+                    expensive_text = str(expensive_result.get("assistant") or "")
+                    if expensive_result.get("ok") and expensive_text.strip():
+                        sim = embedding_similarity(
+                            assistant_text,
+                            expensive_text,
+                            model_path=embedding_model,
+                        )
+                        if sim < similarity_threshold:
+                            replacement_chat = chat_text_for_ui(
+                                assistant_full=expensive_text,
+                                user_raw=content.strip(),
+                            )
+                            replacement_hist = [
+                                {"role": r, "content": c}
+                                for r, c in cast(
+                                    list[tuple[str, str]],
+                                    expensive_result["history"],
+                                )
+                            ]
+                            write_line(
+                                {
+                                    "type": "replacement",
+                                    "ok": True,
+                                    "assistant": expensive_text,
+                                    "chat": replacement_chat,
+                                    "history": replacement_hist,
+                                    "model_role": "expensive",
+                                    "model": expensive_result.get("model"),
+                                    "similarity": sim,
+                                    "reason": (
+                                        f"semantic similarity {sim:.3f} below "
+                                        f"{similarity_threshold:.3f}"
+                                    ),
+                                }
+                            )
+                        else:
+                            write_line(
+                                {
+                                    "type": "comparison",
+                                    "ok": True,
+                                    "similarity": sim,
+                                    "kept": "cheap",
+                                }
+                            )
+                except Exception as exc:
+                    write_line(
+                        {
+                            "type": "comparison",
+                            "ok": False,
+                            "error": str(exc),
+                        }
+                    )
 
     return SchedulerLlmGatewayHandler
 
@@ -425,7 +695,39 @@ def add_gateway_argparse(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--model",
         default=None,
-        help="mlx-lm model path or Hub id (env MLX_MODEL or ~/models/Qwen3-14B)",
+        help="cheap/default mlx-lm model path or Hub id (env MLX_MODEL or ~/models/Qwen3-8B)",
+    )
+    parser.add_argument(
+        "--cheap-model",
+        default=None,
+        help="Fast model path/Hub id (default: ~/models/Qwen3-8B).",
+    )
+    parser.add_argument(
+        "--expensive-model",
+        default=None,
+        help="Fallback/reference model path/Hub id (default: ~/models/Qwen3-14B).",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default=None,
+        help="Embedding model path/Hub id (default: ~/models/Qwen3-Embedding-4B).",
+    )
+    parser.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=float(
+            os.environ.get("SCHEDULER_SIMILARITY_THRESHOLD", DEFAULT_SIMILARITY_THRESHOLD)
+        ),
+    )
+    parser.add_argument(
+        "--self-grade-threshold",
+        type=float,
+        default=float(os.environ.get("SCHEDULER_SELF_GRADE_THRESHOLD", "0.80")),
+    )
+    parser.add_argument(
+        "--no-background-reference",
+        action="store_true",
+        help="Disable Qwen3-14B background comparison/replacement flow.",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
@@ -488,6 +790,12 @@ def argparse_to_factory_kwargs(ns: argparse.Namespace):
         min_p=float(os.environ.get("MLX_MIN_P", "0.0") or "0.0"),
         max_tokens_override=ns.max_tokens,
         max_history_override=ns.max_history_messages,
+        cheap_model=ns.cheap_model or ns.model,
+        expensive_model=ns.expensive_model,
+        embedding_model=ns.embedding_model or str(DEFAULT_EMBEDDING_MODEL_DIR),
+        similarity_threshold=ns.similarity_threshold,
+        background_reference=not ns.no_background_reference,
+        self_grade_threshold=ns.self_grade_threshold,
     )
 
 

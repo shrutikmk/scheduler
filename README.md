@@ -6,7 +6,8 @@ Local scheduling workspace: a **day-planner chat** (MLX on Apple Silicon), a **H
 
 - Python **3.12+**
 - [uv](https://docs.astral.sh/uv/) for dependencies
-- MLX runs on **Metal** (Apple Silicon). Models are resolved via `MLX_MODEL` / `--model` / [`samples/mlx_chat_cli.py`](samples/mlx_chat_cli.py) defaults (see that file for paths).
+- MLX runs on **Metal** (Apple Silicon). The scheduler defaults to a fast
+  `Qwen3-8B` model and can run `Qwen3-14B` in the background as a fallback/reference.
 
 ## Install
 
@@ -15,6 +16,17 @@ cd scheduler
 uv sync
 uv sync --group samples-mlx
 ```
+
+Model snapshots should live under `~/models`:
+
+```bash
+mkdir -p ~/models
+HF_HOME="$HOME/models/.hf-cache" hf download Qwen/Qwen3-8B --local-dir "$HOME/models/Qwen3-8B"
+HF_HOME="$HOME/models/.hf-cache" hf download Qwen/Qwen3-Embedding-4B --local-dir "$HOME/models/Qwen3-Embedding-4B"
+```
+
+`Qwen3-14B` is used as the expensive reference model when present at
+`~/models/Qwen3-14B`.
 
 ## Run the browser shell (recommended)
 
@@ -25,6 +37,21 @@ Use **two terminals**: the LLM runs in a separate gateway process; the UI proxie
 ```bash
 uv run --group samples-mlx python samples/mlx_llm_gateway.py
 ```
+
+Useful gateway flags:
+
+```bash
+uv run --group samples-mlx python samples/mlx_llm_gateway.py \
+  --cheap-model "$HOME/models/Qwen3-8B" \
+  --expensive-model "$HOME/models/Qwen3-14B" \
+  --embedding-model "$HOME/models/Qwen3-Embedding-4B"
+```
+
+The gateway validates the fast answer, falls back to `Qwen3-14B` when needed,
+and can later replace the visible plan if the background reference response is
+semantically different below the configured similarity threshold. Use
+`--no-background-reference` if running both scheduler models creates too much
+Metal memory pressure.
 
 **Terminal 2 — static shell + habits (default `http://127.0.0.1:8765/`):**
 

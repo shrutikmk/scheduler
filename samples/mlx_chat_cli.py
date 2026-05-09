@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""MLX Metal chat defaulting to **Qwen3-14B** (``Qwen/Qwen3-14B``).
+"""MLX Metal chat defaulting to **Qwen3-8B** (``Qwen/Qwen3-8B``).
 
-Model card: https://huggingface.co/Qwen/Qwen3-14B
+Model card: https://huggingface.co/Qwen/Qwen3-8B
 
 Weights are expected under::
 
-    ~/models/Qwen3-14B
+    ~/models/Qwen3-8B
 
 Download with::
 
@@ -22,7 +22,7 @@ Override path or stream from Hub::
     export MLX_MODEL="/path/to/snapshot"
     # or
     uv run --group samples-mlx python samples/mlx_chat_cli.py \\
-        --model Qwen/Qwen3-14B
+        --model Qwen/Qwen3-8B
 
 **Browser shell** — MLX runs as a separate internal API gateway; the UI only proxies HTTP::
 
@@ -111,8 +111,8 @@ Role = Literal["user", "assistant"]
 class _SupportsEncode(Protocol):
     def encode(self, text: str, *args: Any, **kwargs: Any) -> Any: ...
 
-DEFAULT_HUB_REPO = "Qwen/Qwen3-14B"
-DEFAULT_LOCAL_MODEL_DIR = Path.home() / "models" / "Qwen3-14B"
+DEFAULT_HUB_REPO = "Qwen/Qwen3-8B"
+DEFAULT_LOCAL_MODEL_DIR = Path.home() / "models" / "Qwen3-8B"
 
 TOKENIZER_FILES = (
     "tokenizer.json",
@@ -351,7 +351,7 @@ def _finalize_sampling_defaults(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "MLX Metal chat for Qwen3-14B (local ~/models or Hub)."
+            "MLX Metal chat for Qwen3-8B (local ~/models or Hub)."
         ),
     )
     parser.add_argument(

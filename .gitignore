@@ -14,3 +14,11 @@ data/
 
 # Habit Builder exports (folder kept via backups/.gitkeep)
 backups/*.json
+
+# Local model/cache artifacts
+models/
+.cache/
+.hf-cache/
+*.safetensors
+*.gguf
+*.bin
