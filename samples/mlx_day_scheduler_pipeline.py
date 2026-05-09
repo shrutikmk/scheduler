@@ -172,8 +172,9 @@ def strip_reasoning_blocks(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
+# Optional leading ``[YYYY-MM-DD]`` calendar tag for multi-day persistence / UI import.
 _SCHED_LINE_RE = re.compile(
-    r"^\*\s*\[[^\]]+\]\s*-\s*(.+?)\s*-\s*(\d+h\d+m)\s*$",
+    r"^\*\s*(?:\[(\d{4}-\d{2}-\d{2})\]\s+)?\[([^\]]+)\]\s*-\s*(.+?)\s*-\s*(\d+h\d+m)\s*$",
 )
 
 
@@ -471,21 +472,29 @@ def prepare_day_scheduler_user_for_prompt(
     user_raw: str,
     *,
     host_context: str | None = None,
+    clock_minutes: int | None = None,
+    clock_date: date | None = None,
 ) -> tuple[str, int, date]:
     """Apply completion meta + facts + hard-clock (+ optional habit context).
 
     Completion detection and `[Facts — …]` use **only** ``user_raw`` so habit titles
     cannot accidentally trigger scheduling fact injectors.
+
+    When ``clock_minutes`` and ``clock_date`` are set (typically from the browser calendar),
+    they override the server's local clock for scheduling semantics.
     """
     user_visible = user_raw.strip()
     user_for_prompt = user_visible
 
     completion_labels = _scheduler_completion_labels(user_visible)
-    clock_minutes, clock_date = _local_wall_clock_snapshot()
+    if clock_minutes is not None and clock_date is not None:
+        wall_minutes, clock_d = clock_minutes % (24 * 60), clock_date
+    else:
+        wall_minutes, clock_d = _local_wall_clock_snapshot()
 
     if completion_labels:
         labels_fmt = ", ".join(repr(lab) for lab in completion_labels)
-        floor = _minutes_to_ampm(clock_minutes)
+        floor = _minutes_to_ampm(wall_minutes)
         user_for_prompt = (
             f"{user_visible}\n\n"
             "[Meta — scheduler]\n"
@@ -498,7 +507,7 @@ def prepare_day_scheduler_user_for_prompt(
             "Those are **still owed**; **slide** their start times so the full day stays "
             "consistent with local NOW in the clock block (every line starts at or after "
             f"NOW). For **this** reply, local NOW is {floor} on "
-            f"{clock_date.isoformat()}.\n"
+            f"{clock_d.isoformat()}.\n"
             "Output only the full refreshed stylized TO DO banner plus bullets."
         )
 
@@ -506,7 +515,7 @@ def prepare_day_scheduler_user_for_prompt(
     if fact_sheet is not None:
         user_for_prompt = f"{fact_sheet}\n\n{user_for_prompt}"
 
-    floor = _minutes_to_ampm(clock_minutes)
+    floor = _minutes_to_ampm(wall_minutes)
     prelude = ""
     if host_context and host_context.strip():
         prelude = (
@@ -516,15 +525,15 @@ def prepare_day_scheduler_user_for_prompt(
         )
 
     user_for_prompt = (
-        f"[Hard clock — this turn] Local NOW = {floor} (applies to this reply). "
-        f"Every bullet's `[time]` must be **at or after {floor}**. Rebuild the full "
-        "timetable from this moment; keep **all** still-owed tasks and **push** their "
-        "starts forward—do not drop unmentioned work and do not reuse earlier times from "
-        "prior messages.\n\n"
+        f"[Hard clock — this turn] Client local NOW = {floor} on {clock_d.isoformat()}.\n"
+        "For bullets **without** an explicit `* [YYYY-MM-DD]` calendar prefix, times refer to "
+        f"that same calendar day (**{clock_d.isoformat()}**) and `[time]` must be **≥ {floor}**.\n"
+        "For obligations on another calendar day use `* [YYYY-MM-DD] [time] - …`, with times "
+        "interpreted in the user's local timezone.\n\n"
         + prelude
         + user_for_prompt
     )
-    return user_for_prompt, clock_minutes, clock_date
+    return user_for_prompt, wall_minutes, clock_d
 
 
 def _generate_plain_completion(
@@ -697,6 +706,8 @@ def generate_day_scheduler_reply(
     buffer_full_reply: bool,
     max_history_messages: int,
     host_context: str | None = None,
+    client_clock_minutes: int | None = None,
+    client_clock_date: date | None = None,
     on_stream_chunk: Callable[[str], None] | None = None,
     on_stream_thinking: Callable[[str], None] | None = None,
     on_thinking_closed: Callable[[], None] | None = None,
@@ -710,6 +721,8 @@ def generate_day_scheduler_reply(
     user_for_prompt, clock_minutes, clock_date = prepare_day_scheduler_user_for_prompt(
         user_raw,
         host_context=host_context,
+        clock_minutes=client_clock_minutes,
+        clock_date=client_clock_date,
     )
     clock_suffix = _day_scheduler_clock_suffix(
         clock_minutes=clock_minutes,

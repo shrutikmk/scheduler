@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import threading
+from datetime import date
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, cast
@@ -307,11 +308,32 @@ def build_llm_gateway_handler(
             hist = [(r, t) for r, t in pairs]
 
             habits_raw = payload.get("habits_block")
-            host_context = (
+            host_ctx = (
                 habits_raw.strip()
                 if isinstance(habits_raw, str) and habits_raw.strip()
                 else None
             )
+
+            extra_ctx = payload.get("persisted_tasks_context")
+            if isinstance(extra_ctx, str) and extra_ctx.strip():
+                persist = extra_ctx.strip()
+                host_ctx = f"{persist}\n\n{host_ctx}" if host_ctx else persist
+
+            host_context = host_ctx
+
+            client_clock_minutes: int | None = None
+            client_clock_date: date | None = None
+            cc = payload.get("client_calendar")
+            if isinstance(cc, dict):
+                d_raw = cc.get("date_iso")
+                mod_raw = cc.get("minute_of_day")
+                try:
+                    if isinstance(d_raw, str) and isinstance(mod_raw, int):
+                        client_clock_date = date.fromisoformat(d_raw)
+                        client_clock_minutes = int(mod_raw) % (24 * 60)
+                except ValueError:
+                    client_clock_date = None
+                    client_clock_minutes = None
 
             schedule_buffer = payload.get("buffer") is True or os.environ.get(
                 "MLX_DAY_SCHEDULER_BUFFER", ""
@@ -369,6 +391,8 @@ def build_llm_gateway_handler(
                     buffer_full_reply=schedule_buffer,
                     max_history_messages=max_hist,
                     host_context=host_context,
+                    client_clock_minutes=client_clock_minutes,
+                    client_clock_date=client_clock_date,
                     on_stream_chunk=on_chunk,
                     on_stream_thinking=stream_thinking_cb,
                     on_thinking_closed=thinking_done_cb,

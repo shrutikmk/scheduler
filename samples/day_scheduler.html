@@ -6,10 +6,15 @@
   <title>Day scheduler</title>
   <style>
     :root {
-      --border: #ddd;
-      --bg: #fafafa;
-      --text: #1a1a1a;
-      --muted: #666;
+      --border: #e5e7eb;
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --soft: #f3f6fb;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
     }
     * { box-sizing: border-box; }
     html, body {
@@ -17,7 +22,9 @@
       margin: 0;
       font-family: system-ui, -apple-system, sans-serif;
       color: var(--text);
-      background: var(--bg);
+      background:
+        radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 32rem),
+        var(--bg);
     }
     .grid {
       display: grid;
@@ -34,11 +41,12 @@
     .col:last-child { border-right: none; }
     .col-header {
       flex: 0 0 auto;
-      padding: 0.5rem 0.75rem;
+      padding: 0.65rem 0.9rem;
       font-weight: 600;
       font-size: 0.95rem;
       border-bottom: 1px solid var(--border);
-      background: #fff;
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(14px);
     }
     .col-header.flex-head {
       display: flex;
@@ -50,7 +58,7 @@
       font-weight: normal;
       font-size: 0.75rem;
       padding: 0.15rem 0.45rem;
-      border-radius: 4px;
+      border-radius: 999px;
       border: 1px solid #ddd;
       white-space: nowrap;
       max-width: 55%;
@@ -67,6 +75,25 @@
       border-color: #ef9a9a;
       color: #b71c1c;
     }
+    .btn-clear-day {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.2rem 0.45rem;
+      border-radius: 8px;
+      border: 1px solid #fecaca;
+      background: #fff;
+      color: #b91c1c;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-clear-day:hover {
+      background: #fef2f2;
+      border-color: #f87171;
+    }
+    .btn-clear-day:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     .col-body {
       flex: 1 1 auto;
       overflow: hidden;
@@ -80,7 +107,7 @@
       background: #fff;
     }
     #agenda-body {
-      padding: 0.65rem 0.85rem;
+      padding: 0.85rem;
       overflow: auto;
       font-size: 0.92rem;
     }
@@ -89,75 +116,196 @@
       font-size: 0.85rem;
       margin-bottom: 0.5rem;
     }
-    .banner-pre {
-      font-family: ui-monospace, Menlo, monospace;
+    .planner-card-list {
+      display: grid;
+      gap: 0.6rem;
+      margin-bottom: 1rem;
+    }
+    .task-card {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.75rem 0.8rem;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.05);
+    }
+    .task-card.pending {
+      border-left: 4px solid var(--accent);
+    }
+    .task-card.done {
+      opacity: 0.72;
+      border-left: 4px solid #16a34a;
+    }
+    .task-card.cancelled {
+      opacity: 0.6;
+      border-left: 4px solid #9ca3af;
+    }
+    .task-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.6rem;
+      margin-bottom: 0.45rem;
+    }
+    .task-card-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex: 0 0 auto;
+    }
+    .task-title {
+      font-weight: 650;
+      line-height: 1.25;
+    }
+    .task-time {
+      flex: 0 0 auto;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-radius: 999px;
+      padding: 0.18rem 0.5rem;
       font-size: 0.78rem;
-      margin: 0 0 0.6rem;
-      white-space: pre-wrap;
-      color: #333;
+      font-weight: 650;
+      white-space: nowrap;
     }
-    #agenda-list {
-      list-style: none;
+    .task-complete-btn {
+      width: 1.65rem;
+      height: 1.65rem;
+      display: inline-grid;
+      place-items: center;
       padding: 0;
-      margin: 0;
+      color: #15803d;
+      background: #dcfce7;
+      border: 1px solid #86efac;
+      border-radius: 999px;
+      font-size: 1rem;
+      line-height: 1;
     }
-    #agenda-list li {
-      padding: 0.35rem 0;
-      border-bottom: 1px solid #eee;
+    .task-complete-btn:hover {
+      color: #166534;
+      background: #bbf7d0;
     }
-    #agenda-list li span.time { color: #0a56c5; margin-right: 0.35rem; }
-    #agenda-fallback-pre {
-      font-family: ui-monospace, Menlo, monospace;
-      font-size: 0.8rem;
-      white-space: pre-wrap;
-      margin: 0;
+    .task-complete-btn:disabled {
+      color: #94a3b8;
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+    }
+    .task-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .task-chip {
+      border: 1px solid var(--border);
+      background: var(--soft);
+      border-radius: 999px;
+      padding: 0.12rem 0.45rem;
+    }
+    .empty-card {
+      border: 1px dashed #cbd5e1;
+      border-radius: 14px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.7);
+      padding: 0.75rem;
+      line-height: 1.4;
     }
     #chat-scroll {
       flex: 1 1 auto;
       overflow: auto;
-      padding: 0.65rem;
-      background: #f5f5f5;
+      padding: 1rem 0.9rem;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(248, 250, 252, 0.92)),
+        #f8fafc;
     }
     .msg {
-      margin-bottom: 0.6rem;
-      padding: 0.45rem 0.65rem;
-      border-radius: 6px;
-      max-width: 100%;
+      margin-bottom: 0.8rem;
+      padding: 0.7rem 0.8rem;
+      border-radius: 18px;
+      max-width: min(92%, 44rem);
       font-size: 0.9rem;
       line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
     }
     .msg.user {
-      margin-left: 1rem;
-      background: #dceaff;
-      border: 1px solid #bcd6f5;
+      margin-left: auto;
+      background: linear-gradient(135deg, #dbeafe, #eff6ff);
+      border: 1px solid #bfdbfe;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
     }
     .msg.assistant {
-      margin-right: 1rem;
+      margin-right: auto;
       background: #fff;
       border: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       gap: 0.35rem;
     }
+    .msg-actions {
+      align-self: flex-end;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+      margin: 0 0 0.15rem;
+    }
+    .msg-action-btn {
+      font-size: 0.72rem;
+      padding: 0.14rem 0.46rem;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid #d1d5db;
+      border-radius: 999px;
+      color: #374151;
+    }
+    .msg.user .msg-action-btn {
+      background: rgba(255, 255, 255, 0.9);
+    }
+    .msg-action-btn:hover {
+      background: #f0f0f0;
+    }
+    .msg-body-content {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .msg-thinking {
-      color: #9a9a9a;
+      color: #64748b;
       font-size: 0.82rem;
       line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
       max-height: 10rem;
       overflow: hidden;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 0.55rem 0.65rem;
+      background: #f8fafc;
       transition:
         opacity 0.48s ease,
         max-height 0.52s ease,
-        margin 0.45s ease;
+        margin 0.45s ease,
+        padding 0.45s ease,
+        border-color 0.45s ease;
+    }
+    .msg-thinking::before {
+      content: "Thinking";
+      display: block;
+      color: #94a3b8;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.25rem;
     }
     .msg-thinking.thinking-fading {
       opacity: 0;
       max-height: 0;
       margin: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+      border-color: transparent;
       pointer-events: none;
     }
     .msg-thinking:empty {
@@ -166,8 +314,9 @@
     .chat-compose {
       flex: 0 0 auto;
       border-top: 1px solid var(--border);
-      padding: 0.45rem;
-      background: #fff;
+      padding: 0.7rem;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 -10px 28px rgba(15, 23, 42, 0.05);
       display: flex;
       flex-direction: column;
       gap: 0.35rem;
@@ -175,13 +324,22 @@
     .chat-compose textarea {
       width: 100%;
       resize: vertical;
-      min-height: 3rem;
+      min-height: 3.2rem;
       max-height: 10rem;
-      padding: 0.45rem;
+      padding: 0.65rem 0.75rem;
       font-family: inherit;
       font-size: 0.9rem;
-      border: 1px solid #ccc;
-      border-radius: 4px;
+      border: 1px solid #cbd5e1;
+      border-radius: 16px;
+      background: #fff;
+      outline: none;
+      box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .chat-compose textarea:focus {
+      border-color: #93c5fd;
+      box-shadow:
+        0 0 0 3px rgba(37, 99, 235, 0.12),
+        inset 0 1px 2px rgba(15, 23, 42, 0.04);
     }
     .chat-row {
       display: flex;
@@ -191,14 +349,14 @@
     button {
       padding: 0.4rem 0.75rem;
       cursor: pointer;
-      background: #eee;
-      border: 1px solid #ccc;
-      border-radius: 4px;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
       font-size: 0.85rem;
     }
     button:hover { background: #e5e5e5; }
-    button.primary { background: #2a67d9; color: #fff; border-color: #1f52ae; }
-    button.primary:hover { background: #255bb8; }
+    button.primary { background: #2563eb; color: #fff; border-color: #1d4ed8; }
+    button.primary:hover { background: #1d4ed8; }
     button:disabled {
       opacity: 0.55;
       cursor: not-allowed;
@@ -212,7 +370,7 @@
       font-size: 0.8rem;
       font-weight: 600;
       color: #444;
-      margin: 0.35rem 0 0.4rem;
+      margin: 0.8rem 0 0.45rem;
       text-transform: uppercase;
       letter-spacing: 0.03em;
     }
@@ -254,16 +412,39 @@
     </section>
 
     <section class="col">
-      <div class="col-header">Today's agenda</div>
+      <div
+        class="col-header"
+        style="display:flex;justify-content:space-between;align-items:center;gap:0.35rem"
+      >
+        <span>Planner</span>
+        <div
+          style="display:flex;align-items:center;gap:0.45rem;font-size:0.85rem;font-weight:normal;flex-wrap:wrap;justify-content:flex-end"
+        >
+          <div style="display:flex;align-items:center;gap:0.35rem">
+            <button type="button" id="btn-prev-day" title="Previous day">←</button>
+            <span id="focus-date-label"></span>
+            <button type="button" id="btn-next-day" title="Next day">→</button>
+          </div>
+          <button
+            type="button"
+            id="btn-clear-schedule-day"
+            class="btn-clear-day"
+            title="Remove all saved tasks for this day and clear the chat"
+          >
+            Clear day
+          </button>
+        </div>
+      </div>
       <div class="col-body" id="agenda-body">
         <div class="date-line" id="today-label"></div>
         <div class="subhead">Habit Builder</div>
         <p class="muted" id="habits-builder-hint" hidden></p>
         <ul id="habits-from-builder-list"></ul>
-        <div class="subhead">Planned blocks</div>
-        <pre class="banner-pre" id="agenda-banner" hidden></pre>
-        <ul id="agenda-list"></ul>
-        <pre id="agenda-fallback-pre" hidden></pre>
+        <div class="subhead">Saved plan</div>
+        <div class="planner-card-list" id="agenda-db-list"></div>
+        <div class="subhead">Latest suggested plan</div>
+        <div class="planner-card-list" id="agenda-list"></div>
+        <div class="empty-card" id="agenda-fallback-pre" hidden></div>
       </div>
     </section>
 
@@ -276,7 +457,7 @@
         <div id="chat-scroll" aria-live="polite"></div>
         <div class="chat-compose">
           <div class="status" id="chat-status"></div>
-          <textarea id="prompt" placeholder="Describe your day, updates, completions…"></textarea>
+          <textarea id="prompt" placeholder="Describe your day… Enter sends; Shift+Enter for a line break (messages queue while a reply streams)."></textarea>
           <div class="chat-row">
             <button type="button" id="send" class="primary">Send</button>
             <button type="button" id="clear-thread">Clear</button>
@@ -289,7 +470,6 @@
   <script>
 (function () {
   const chatScroll = document.getElementById("chat-scroll");
-  const agendaBanner = document.getElementById("agenda-banner");
   const agendaList = document.getElementById("agenda-list");
   const agendaFallback = document.getElementById("agenda-fallback-pre");
   const habitsUl = document.getElementById("habits-from-builder-list");
@@ -300,15 +480,60 @@
   const clearBtn = document.getElementById("clear-thread");
   const statusEl = document.getElementById("chat-status");
   const llmPill = document.getElementById("llm-status-pill");
+  const agendaDbList = document.getElementById("agenda-db-list");
+  const btnPrevDay = document.getElementById("btn-prev-day");
+  const btnNextDay = document.getElementById("btn-next-day");
+  const btnClearScheduleDay = document.getElementById("btn-clear-schedule-day");
+  const focusDateLabelEl = document.getElementById("focus-date-label");
 
   /** @type {boolean} */
   let llmOnline = false;
   /** @type {boolean} */
   let requestInFlight = false;
 
+  /** Messages to send after the active stream completes (FIFO). */
+  /** @type {string[]} */
+  const pendingQueue = [];
+
+  async function copyTextToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+  }
+
+  function refreshComposeStatus() {
+    let t = "";
+    if (requestInFlight) {
+      t =
+        pendingQueue.length > 0
+          ? "Thinking… · " + pendingQueue.length + " queued"
+          : "Thinking…";
+    } else if (pendingQueue.length > 0) {
+      t =
+        pendingQueue.length +
+        " message(s) queued — next sends automatically when idle";
+    }
+    statusEl.textContent = t;
+  }
+
   function refreshSendEnabled() {
-    sendBtn.disabled = !llmOnline || requestInFlight;
-    promptEl.disabled = requestInFlight;
+    sendBtn.disabled = !llmOnline;
   }
 
   async function pollLlmHealth() {
@@ -341,6 +566,7 @@
       llmPill.title = String(e && e.message ? e.message : e);
     }
     refreshSendEnabled();
+    refreshComposeStatus();
   }
 
   void pollLlmHealth();
@@ -360,7 +586,19 @@
   /** @type {{ id: string, title: string, start: string, days: Record<string, boolean> }[]} */
   let latestHabits = [];
 
-  const SCHED_LINE = /^\*\s*\[([^\]]+)\]\s*-\s*(.+?)\s*-\s*(\d+h\d+m)\s*$/;
+  const SCHED_LINE =
+    /^\*\s+(?:\[(\d{4}-\d{2}-\d{2})\]\s+)?\[([^\]]+)\]\s*-\s*(.+?)\s*-\s*(\d+h\d+m)\s*$/;
+
+  /** Local calendar day shown in the planner (`YYYY-MM-DD`). */
+  /** @type {string} */
+  let focusDateIso = "";
+
+  /** Undated bullets in the last model reply use this calendar anchor (send-time local date). */
+  /** @type {string} */
+  let lastAssistClientDateIso = "";
+
+  /** @type {string} */
+  let lastLlmPreview = "";
 
   function pad2(n) {
     return String(n).padStart(2, "0");
@@ -368,6 +606,132 @@
 
   function localDateISO(d) {
     return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  focusDateIso = localDateISO(new Date());
+  lastAssistClientDateIso = focusDateIso;
+
+  function addDaysIso(iso, deltaDays) {
+    const parts = iso.split("-").map(Number);
+    const t = new Date(parts[0], parts[1] - 1, parts[2]);
+    t.setDate(t.getDate() + deltaDays);
+    return localDateISO(t);
+  }
+
+  function formatLongDateLabel(iso) {
+    const parts = iso.split("-").map(Number);
+    const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+    return new Intl.DateTimeFormat(undefined, {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    }).format(dt);
+  }
+
+  function refreshFocusChrome() {
+    if (focusDateLabelEl) focusDateLabelEl.textContent = formatLongDateLabel(focusDateIso);
+    const todayIso = localDateISO(new Date());
+    if (todayLabel) {
+      todayLabel.textContent =
+        focusDateIso === todayIso
+          ? "Showing — " + formatLongDateLabel(focusDateIso) + " (today)"
+          : "Showing — " + formatLongDateLabel(focusDateIso);
+    }
+  }
+
+  function bumpFocusDay(delta) {
+    focusDateIso = addDaysIso(focusDateIso, delta);
+    refreshFocusChrome();
+    void reloadDbAgenda();
+    refreshLlmSchedule(lastLlmPreview);
+  }
+
+  if (btnPrevDay) btnPrevDay.addEventListener("click", () => bumpFocusDay(-1));
+  if (btnNextDay) btnNextDay.addEventListener("click", () => bumpFocusDay(1));
+
+  function resetChatAndPreviewUi(msgStatus) {
+    chatHistory = [];
+    pendingQueue.length = 0;
+    chatScroll.innerHTML = "";
+    lastLlmPreview = "";
+    refreshLlmSchedule("");
+    refreshComposeStatus();
+    void reloadDbAgenda();
+    if (typeof msgStatus === "string") statusEl.textContent = msgStatus;
+  }
+
+  if (btnClearScheduleDay) {
+    btnClearScheduleDay.addEventListener("click", function () {
+      const label = formatLongDateLabel(focusDateIso);
+      if (
+        !confirm(
+          "Clear all saved tasks for " +
+            label +
+            " and reset the chat? This cannot be undone.",
+        )
+      ) {
+        return;
+      }
+      btnClearScheduleDay.disabled = true;
+      void (async function () {
+        try {
+          const r = await fetch("/api/tasks/clear_day", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              date: focusDateIso,
+              clear_conversation: true,
+            }),
+          });
+          if (!r.ok) {
+            const t = await r.text().catch(() => "");
+            statusEl.textContent = "Clear day failed (" + r.status + "): " + t;
+            return;
+          }
+          resetChatAndPreviewUi("(schedule cleared for " + label + ")");
+        } catch (e) {
+          statusEl.textContent = String(e && e.message ? e.message : e);
+        } finally {
+          btnClearScheduleDay.disabled = false;
+        }
+      })();
+    });
+  }
+
+  function clientCalendarPayload() {
+    const now = new Date();
+    return {
+      date_iso: localDateISO(now),
+      minute_of_day: now.getHours() * 60 + now.getMinutes(),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    };
+  }
+
+  function durationLabelFromMinutes(dm) {
+    const h = Math.floor(dm / 60);
+    const mm = dm % 60;
+    return h + "h" + String(mm).padStart(2, "0") + "m";
+  }
+
+  async function reloadDbAgenda() {
+    if (!agendaDbList) return;
+    try {
+      const r = await fetch("/api/tasks?date=" + encodeURIComponent(focusDateIso), {
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        renderTaskCards(agendaDbList, [], "Saved plan unavailable.");
+        return;
+      }
+      const j = await r.json().catch(() => ({ tasks: [] }));
+      const tasks = j.tasks || [];
+      renderTaskCards(agendaDbList, tasks, "No saved tasks for this day yet.", {
+        allowComplete: true,
+      });
+    } catch (_) {
+      renderTaskCards(agendaDbList, [], "Saved plan unavailable.");
+    }
   }
 
   function openHabitDb() {
@@ -443,6 +807,26 @@
   }
 
   async function syncHabitsFromStorage() {
+    try {
+      const r = await fetch("/api/habits", { cache: "no-store" });
+      if (r.ok) {
+        const row = await r.json().catch(() => null);
+        if (row && Array.isArray(row.habits)) {
+          latestHabits = [];
+          for (let i = 0; i < row.habits.length; i++) {
+            const h = normalizeHabitShell(row.habits[i]);
+            if (h) latestHabits.push(h);
+          }
+          habitsHint.textContent =
+            latestHabits.length === 0
+              ? "Add habits in Habit Builder (left) · stored in SQLite when the shell server runs."
+              : "";
+          habitsHint.hidden = latestHabits.length > 0;
+          renderHabitsInAgenda(latestHabits);
+          return latestHabits;
+        }
+      }
+    } catch (_) {}
     latestHabits = await loadHabitsFromBuilderStorage();
     renderHabitsInAgenda(latestHabits);
     return latestHabits;
@@ -453,7 +837,7 @@
     const todayIso = localDateISO(new Date());
     if (!habits.length) {
       habitsHint.textContent =
-        "Add habits in the left panel — same IndexedDB/localStorage as the builder.";
+        "Add habits in the left panel — SQLite via Habit Builder when the UI server is running; otherwise IndexedDB/localStorage.";
       habitsHint.hidden = false;
       return;
     }
@@ -488,77 +872,258 @@
     }
     return (
       bullets.join("\n") +
-      "\n\nBlend these recurring habits into today's schedule where they belong; keep all " +
-      "obligations the user states explicitly."
+      "\n\nThese are active Habit Builder items for awareness only. Do not schedule every " +
+      "habit just because it exists; separate required-habit context will say when one must " +
+      "be added to keep the user on track."
     );
   }
 
-  function todayHeading() {
-    const d = new Date();
-    const nice = new Intl.DateTimeFormat(undefined, {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    }).format(d);
-    todayLabel.textContent = "Today — " + nice;
+  function stripReasoningBlocks(text) {
+    let t = String(text || "");
+    t = t.replace(/<\s*(?:redacted_)?(?:think|thinking)\b[^>]*>[\s\S]*?<\s*\/\s*(?:redacted_)?(?:think|thinking)\s*>/gi, "");
+    t = t.replace(/<\s*(?:redacted_)?(?:think|thinking)\b[^>]*>[\s\S]*$/gi, "");
+    t = t.replace(/<\s*\/\s*(?:redacted_)?(?:think|thinking)\s*>/gi, "");
+    return t.replace(/\n{3,}/g, "\n\n").trim();
   }
 
-  function extractBannerLines(text) {
-    const lines = text.split(/\r?\n/);
-    const banner = [];
-    for (let i = 0; i < lines.length; i++) {
-      const ln = lines[i];
-      if (/^[╭│╰]/.test(ln)) {
-        banner.push(ln);
-        if (/^╰/.test(ln)) break;
-      }
+  function activeReasoningText(text) {
+    const raw = String(text || "");
+    const open = raw.match(/<\s*(?:redacted_)?(?:think|thinking)\b[^>]*>/i);
+    if (!open) return "";
+    const afterOpen = raw.slice((open.index || 0) + open[0].length);
+    const close = afterOpen.search(/<\s*\/\s*(?:redacted_)?(?:think|thinking)\s*>/i);
+    if (close >= 0) return "";
+    return afterOpen.trim();
+  }
+
+  function stripHostFactsPrefix(text) {
+    let t = String(text || "");
+    while (/^\s*\[(?:Facts|Meta)\s+—[\s\S]*?\]\s*/.test(t)) {
+      const blank = t.search(/\n\s*\n/);
+      if (blank < 0) break;
+      t = t.slice(blank).trim();
     }
-    return banner.length ? banner.join("\n") : "";
+    return t.trim();
   }
 
-  function parseTasks(text) {
+  function displayTextForMessage(role, content) {
+    if (role === "assistant") return stripReasoningBlocks(content);
+    if (role === "user") return stripHostFactsPrefix(content);
+    return String(content || "").trim();
+  }
+
+  function parseDurationMinutes(label) {
+    const m = String(label || "").trim().match(/^(\d+)h(\d+)m$/);
+    if (!m) return 0;
+    return Number(m[1]) * 60 + Number(m[2]);
+  }
+
+  /** Minute-of-day for labels like ``8:00 AM`` — matches scheduler_store.start_label_sort_minutes. */
+  function startLabelSortMinutes(s) {
+    const m = String(s || "").trim().match(/^(\d{1,2})\s*:\s*(\d{2})\s*(AM|PM)$/i);
+    if (!m) return 24 * 60 + 1;
+    let h = Number(m[1]);
+    const mi = Number(m[2]);
+    const ap = m[3].toUpperCase();
+    let hour24;
+    if (ap === "PM") hour24 = h === 12 ? 12 : h + 12;
+    else hour24 = h === 12 ? 0 : h;
+    return hour24 * 60 + mi;
+  }
+
+  function parseTasks(text, anchorIsoForUndated) {
     const tasks = [];
-    for (const line of text.split(/\r?\n/)) {
+    for (const line of stripReasoningBlocks(text).split(/\r?\n/)) {
       const m = line.match(SCHED_LINE);
-      if (m) tasks.push({ time: m[1], title: m[2].trim(), dur: m[3] });
+      if (!m) continue;
+      const dateIso = m[1];
+      const time = m[2];
+      const title = m[3].trim();
+      const dur = m[4];
+      const planIso = dateIso ? dateIso : anchorIsoForUndated;
+      if (planIso !== focusDateIso) continue;
+      tasks.push({
+        start_label: time,
+        title,
+        duration_minutes: parseDurationMinutes(dur),
+        status: "suggested",
+      });
     }
     return tasks;
   }
 
+  async function markTaskCompleteViaLlm(task) {
+    const taskId = task && typeof task.task_id === "string" ? task.task_id : "";
+    const title = task && typeof task.title === "string" ? task.title.trim() : "";
+    if (!taskId || !title) return;
+    if (requestInFlight) {
+      statusEl.textContent = "Wait for the current reply before completing another task.";
+      return;
+    }
+    try {
+      statusEl.textContent = "Marking task complete…";
+      const r = await fetch("/api/tasks/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: taskId, status: "done" }),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        statusEl.textContent = "Could not mark task complete" + (msg ? ": " + msg : ".");
+        return;
+      }
+      await reloadDbAgenda();
+      if (!llmOnline) {
+        statusEl.textContent = "Task marked done. LLM is offline, so the plan was not regenerated.";
+        return;
+      }
+      await runChatTurn("I finished " + title);
+    } catch (e) {
+      statusEl.textContent = String(e && e.message ? e.message : e);
+    }
+  }
+
+  function renderTaskCards(container, tasks, emptyText, options) {
+    const allowComplete = !!(options && options.allowComplete);
+    if (!container) return;
+    container.innerHTML = "";
+    if (!tasks.length) {
+      const div = document.createElement("div");
+      div.className = "empty-card";
+      div.textContent = emptyText;
+      container.appendChild(div);
+      return;
+    }
+    const sorted = tasks.slice().sort(function (a, b) {
+      const ka = startLabelSortMinutes(a.start_label);
+      const kb = startLabelSortMinutes(b.start_label);
+      if (ka !== kb) return ka - kb;
+      return String(a.title || "").localeCompare(String(b.title || ""));
+    });
+    for (const task of sorted) {
+      const status = String(task.status || "pending");
+      const dm = typeof task.duration_minutes === "number" ? task.duration_minutes : 0;
+      const card = document.createElement("article");
+      card.className = "task-card " + status;
+      if (task.task_id) card.dataset.taskId = String(task.task_id);
+
+      const top = document.createElement("div");
+      top.className = "task-card-top";
+      const title = document.createElement("div");
+      title.className = "task-title";
+      title.textContent = task.title || "(untitled task)";
+      const actions = document.createElement("div");
+      actions.className = "task-card-actions";
+      const time = document.createElement("div");
+      time.className = "task-time";
+      time.textContent = task.start_label || "Anytime";
+      top.appendChild(title);
+      actions.appendChild(time);
+      if (allowComplete && status === "pending" && task.task_id) {
+        const doneBtn = document.createElement("button");
+        doneBtn.type = "button";
+        doneBtn.className = "task-complete-btn";
+        doneBtn.textContent = "×";
+        doneBtn.title = "Mark complete and regenerate the plan";
+        doneBtn.setAttribute("aria-label", "Mark " + (task.title || "task") + " complete");
+        doneBtn.disabled = requestInFlight;
+        doneBtn.addEventListener("click", function () {
+          doneBtn.disabled = true;
+          void markTaskCompleteViaLlm(task);
+        });
+        actions.appendChild(doneBtn);
+      }
+      top.appendChild(actions);
+
+      const meta = document.createElement("div");
+      meta.className = "task-meta";
+      const dur = document.createElement("span");
+      dur.className = "task-chip";
+      dur.textContent = durationLabelFromMinutes(dm);
+      meta.appendChild(dur);
+      const stat = document.createElement("span");
+      stat.className = "task-chip";
+      stat.textContent = status === "suggested" ? "latest suggestion" : status;
+      meta.appendChild(stat);
+
+      card.appendChild(top);
+      card.appendChild(meta);
+      container.appendChild(card);
+    }
+  }
+
   function refreshLlmSchedule(assistantRaw) {
+    lastLlmPreview = typeof assistantRaw === "string" ? assistantRaw : "";
     agendaList.innerHTML = "";
-    agendaBanner.hidden = true;
     agendaFallback.hidden = true;
     agendaFallback.textContent = "";
 
-    const banner = extractBannerLines(assistantRaw);
-    const tasks = parseTasks(assistantRaw);
-
-    if (banner) {
-      agendaBanner.textContent = banner;
-      agendaBanner.hidden = false;
-    }
-
-    if (tasks.length) {
-      for (const t of tasks) {
-        const li = document.createElement("li");
-        const timeSpan = document.createElement("span");
-        timeSpan.className = "time";
-        timeSpan.textContent = "[" + t.time + "]";
-        li.appendChild(timeSpan);
-        li.appendChild(document.createTextNode(" " + t.title + " · " + t.dur));
-        agendaList.appendChild(li);
-      }
-      return;
-    }
-
-    agendaFallback.textContent = assistantRaw.trim() || "(no plan yet)";
-    agendaFallback.hidden = false;
+    const tasks = parseTasks(lastLlmPreview, lastAssistClientDateIso);
+    renderTaskCards(agendaList, tasks, "No latest suggestions for this day yet.");
   }
 
   function scrollChat() {
     chatScroll.scrollTop = chatScroll.scrollHeight;
+  }
+
+  function appendMessageBubbleWithActions(role, content, histIndex) {
+    const displayContent = displayTextForMessage(role, content);
+    if (!displayContent) return;
+    const wrap = document.createElement("div");
+    wrap.className = "msg " + role;
+
+    const actions = document.createElement("div");
+    actions.className = "msg-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "msg-action-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", async function () {
+      const ok = await copyTextToClipboard(displayContent);
+      copyBtn.textContent = ok ? "Copied" : "Copy failed";
+      window.setTimeout(function () {
+        copyBtn.textContent = "Copy";
+      }, 1400);
+    });
+    actions.appendChild(copyBtn);
+
+    if (role === "user") {
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "msg-action-btn";
+      editBtn.textContent = "Edit";
+      editBtn.addEventListener("click", function () {
+        chatHistory = chatHistory.slice(0, histIndex);
+        promptEl.value = displayContent;
+        rerenderChatFromHistory();
+        void fetch("/api/conversation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ thread_id: "default", messages: chatHistory }),
+        }).catch(function () {});
+        refreshLlmSchedule("");
+        statusEl.textContent = "(thread trimmed — edit and send)";
+        refreshComposeStatus();
+      });
+      actions.appendChild(editBtn);
+    }
+
+    const body = document.createElement("div");
+    body.className = "msg-body-content";
+    body.textContent = displayContent;
+
+    wrap.appendChild(actions);
+    wrap.appendChild(body);
+    chatScroll.appendChild(wrap);
+  }
+
+  function rerenderChatFromHistory() {
+    chatScroll.innerHTML = "";
+    for (let i = 0; i < chatHistory.length; i++) {
+      appendMessageBubbleWithActions(chatHistory[i].role, chatHistory[i].content, i);
+    }
+    scrollChat();
   }
 
   /** @returns {{ wrap: HTMLElement, thinking: HTMLElement, body: HTMLElement, thinkingQueue: string[], thinkingRaf: number | null }} */
@@ -651,12 +1216,12 @@
   function bubble(role, content) {
     if (role === "assistant") {
       const shell = assistantMessageShell();
-      shell.body.textContent = content;
+      shell.body.textContent = displayTextForMessage("assistant", content);
       return shell.wrap;
     }
     const div = document.createElement("div");
     div.className = "msg " + role;
-    div.textContent = content;
+    div.textContent = displayTextForMessage(role, content);
     chatScroll.appendChild(div);
     scrollChat();
     return div;
@@ -664,30 +1229,29 @@
 
   function setBusy(b) {
     requestInFlight = b;
-    statusEl.textContent = b ? "Thinking…" : "";
+    refreshComposeStatus();
     refreshSendEnabled();
   }
 
-  async function handleSend() {
-    const raw = promptEl.value.trim();
-    if (!raw) return;
-    if (!llmOnline) {
-      statusEl.textContent =
-        "LLM API offline — run: uv run --group samples-mlx python samples/mlx_llm_gateway.py";
-      return;
-    }
+  async function runChatTurn(raw) {
     await syncHabitsFromStorage();
     const habitsBlock = buildHabitsBlockForModel(latestHabits);
+    const cc = clientCalendarPayload();
+    lastAssistClientDateIso = cc.date_iso;
 
-    promptEl.value = "";
     bubble("user", raw);
     setBusy(true);
 
     const shell = assistantMessageShell();
 
     function assistantErr(msg) {
-      shell.body.textContent = msg;
+      shell.body.textContent = displayTextForMessage("assistant", msg);
     }
+
+    /** @type {string} */
+    let fullAssistant = "";
+    /** @type {string} */
+    let streamedChat = "";
 
     try {
       const res = await fetch("/chat", {
@@ -697,6 +1261,7 @@
           history: chatHistory,
           content: raw,
           habits_block: habitsBlock,
+          client_calendar: cc,
         }),
       });
       if (!res.ok || !res.body) {
@@ -709,15 +1274,51 @@
       const decoder = new TextDecoder();
       let buf = "";
 
-      /** @type {string} */
-      let fullAssistant = "";
-      /** @type {string} */
-      let streamedChat = "";
+      function applyDoneEvent(evt) {
+        let historyUpdated = false;
+        if (Array.isArray(evt.history)) {
+          chatHistory = evt.history.filter(function (h) {
+            return (
+              h &&
+              (h.role === "user" || h.role === "assistant") &&
+              typeof h.content === "string"
+            );
+          });
+          historyUpdated = true;
+        }
+        if (typeof evt.assistant === "string" && evt.assistant) fullAssistant = evt.assistant;
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
+        fadeThinkingAway(shell);
+
+        if (evt.ok === false && evt.error) {
+          assistantErr("Error: " + evt.error);
+        } else if (typeof evt.chat === "string" && evt.chat.trim()) {
+          shell.body.textContent = displayTextForMessage("assistant", evt.chat);
+        } else if (streamedChat.trim()) {
+          shell.body.textContent = displayTextForMessage("assistant", streamedChat);
+        } else if (fullAssistant) {
+          shell.body.textContent = displayTextForMessage("assistant", fullAssistant);
+        }
+
+        refreshLlmSchedule(fullAssistant);
+        if (historyUpdated) rerenderChatFromHistory();
+      }
+
+      readLoop: while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          const tail = buf.trim();
+          if (tail) {
+            try {
+              const evt = JSON.parse(tail);
+              if (evt.type === "done") {
+                applyDoneEvent(evt);
+              }
+            } catch (_) {}
+          }
+          break readLoop;
+        }
+        buf += decoder.decode(chunk.value, { stream: true });
         let nl;
         while ((nl = buf.indexOf("\n")) >= 0) {
           const line = buf.slice(0, nl).trim();
@@ -736,57 +1337,88 @@
             if (evt.phase === "thinking") {
               enqueueThinkingReveal(shell, evt.text);
             } else {
-              fadeThinkingAway(shell);
               streamedChat += evt.text;
-              shell.body.textContent = streamedChat;
+              const leakedReasoning = activeReasoningText(streamedChat);
+              if (leakedReasoning) {
+                shell.thinking.textContent = leakedReasoning;
+              } else {
+                fadeThinkingAway(shell);
+              }
+              shell.body.textContent = displayTextForMessage("assistant", streamedChat);
               scrollChat();
             }
           }
           if (evt.type === "done") {
-            if (Array.isArray(evt.history)) {
-              chatHistory = evt.history.filter(
-                function (h) {
-                  return h && (h.role === "user" || h.role === "assistant") &&
-                    typeof h.content === "string";
-                }
-              );
-            }
-            if (typeof evt.assistant === "string" && evt.assistant)
-              fullAssistant = evt.assistant;
-
-            fadeThinkingAway(shell);
-
-            if (evt.ok === false && evt.error) {
-              assistantErr("Error: " + evt.error);
-            } else if (typeof evt.chat === "string" && evt.chat.trim()) {
-              shell.body.textContent = evt.chat.trim();
-            } else if (streamedChat.trim()) {
-              shell.body.textContent = streamedChat.trim();
-            } else if (fullAssistant) {
-              shell.body.textContent = fullAssistant;
-            }
-
-            refreshLlmSchedule(fullAssistant);
+            applyDoneEvent(evt);
+            try {
+              await reader.cancel();
+            } catch (_) {}
+            break readLoop;
           }
         }
       }
 
-      refreshLlmSchedule(fullAssistant);
+      const assistText = typeof fullAssistant === "string" ? fullAssistant : "";
+      void (async function () {
+        try {
+          if (assistText.trim()) {
+            await fetch("/api/tasks/import_from_assistant", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                assistant: assistText,
+                client_local_date: lastAssistClientDateIso,
+              }),
+            }).catch(function () {});
+          }
+          await fetch("/api/conversation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ thread_id: "default", messages: chatHistory }),
+          }).catch(function () {});
+        } finally {
+          void reloadDbAgenda();
+        }
+      })();
     } catch (e) {
       assistantErr(String(e && e.message ? e.message : e));
     } finally {
       setBusy(false);
       scrollChat();
       void pollLlmHealth();
+      if (pendingQueue.length > 0 && llmOnline) {
+        const next = pendingQueue.shift();
+        refreshComposeStatus();
+        await runChatTurn(next);
+      } else {
+        refreshComposeStatus();
+      }
     }
+  }
+
+  async function handleSend() {
+    let raw = promptEl.value.trim();
+    if (!raw) return;
+    if (!llmOnline) {
+      statusEl.textContent =
+        "LLM API offline — run: uv run --group samples-mlx python samples/mlx_llm_gateway.py";
+      return;
+    }
+    promptEl.value = "";
+    if (requestInFlight) {
+      pendingQueue.push(raw);
+      refreshComposeStatus();
+      return;
+    }
+    await runChatTurn(raw);
   }
 
   sendBtn.addEventListener("click", handleSend);
   promptEl.addEventListener("keydown", function (ev) {
-    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
-      ev.preventDefault();
-      handleSend();
-    }
+    if (ev.key !== "Enter" || ev.isComposing) return;
+    if (ev.shiftKey) return;
+    ev.preventDefault();
+    void handleSend();
   });
 
   window.addEventListener("message", function (ev) {
@@ -809,13 +1441,36 @@
   }
 
   clearBtn.addEventListener("click", function () {
-    chatHistory = [];
-    chatScroll.innerHTML = "";
-    refreshLlmSchedule("");
-    statusEl.textContent = "(thread cleared)";
+    void fetch("/api/conversation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thread_id: "default", messages: [] }),
+    }).catch(function () {});
+    resetChatAndPreviewUi("(thread cleared)");
   });
 
-  todayHeading();
+  async function hydrateConversationFromServer() {
+    try {
+      const r = await fetch("/api/conversation?thread_id=default", { cache: "no-store" });
+      if (!r.ok) return;
+      const j = await r.json().catch(() => ({}));
+      const msgs = j.messages || [];
+      if (!msgs.length) return;
+      chatHistory = msgs.filter(function (h) {
+        return (
+          h &&
+          (h.role === "user" || h.role === "assistant") &&
+          typeof h.content === "string"
+        );
+      });
+      chatScroll.innerHTML = "";
+      rerenderChatFromHistory();
+    } catch (_) {}
+  }
+
+  refreshFocusChrome();
+  void reloadDbAgenda();
+  void hydrateConversationFromServer();
   void syncHabitsFromStorage().then(function () {
     refreshLlmSchedule("");
   });

@@ -301,6 +301,8 @@
   let habits = [];
   /** @type {string | null} */
   let selectedId = null;
+  /** When true, persistence uses ``PUT /api/habits`` (same origin as the day-scheduler server). */
+  let useHabitsRestApi = false;
   let viewYear = new Date().getFullYear();
   let viewMonth = new Date().getMonth();
 
@@ -364,6 +366,27 @@
   async function persistState() {
     const payload = buildStatePayload();
     mirrorLocalStorageBackup();
+    if (useHabitsRestApi) {
+      try {
+        const resp = await fetch("/api/habits", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!resp.ok) throw new Error("PUT /api/habits failed: " + resp.status);
+        setStorageStatus(
+          true,
+          habits.length === 0
+            ? "No habits yet — saved to SQLite."
+            : `${habits.length} habit(s) · SQLite.`,
+        );
+      } catch (e) {
+        console.error("habit-builder: SQLite API save failed", e);
+        setStorageStatus(false, "Could not save to server — check day_scheduler UI is running.");
+      }
+      notifyParentDaySchedulerShell();
+      return;
+    }
     await writeStateRow(payload);
     setStorageStatus(
       true,
@@ -426,7 +449,7 @@
     });
   }
 
-  async function loadFromIndexedDb() {
+  async function loadFromIndexedDbOnly() {
     let row = null;
     try {
       row = await readStateRow();
@@ -460,6 +483,45 @@
         localStorage.removeItem(LEGACY_STORAGE_KEY);
       } catch (_) {}
     }
+  }
+
+  async function loadInitialState() {
+    try {
+      const r = await fetch("/api/habits", { cache: "no-store" });
+      if (r.ok) {
+        useHabitsRestApi = true;
+        const snap = await r.json();
+        if (snap && Array.isArray(snap.habits) && snap.habits.length) {
+          ingestStorageRow(snap);
+          mirrorLocalStorageBackup();
+          setStorageStatus(
+            true,
+            `${habits.length} habit(s) · SQLite (PUT /api/habits on each change).`,
+          );
+          return;
+        }
+        await loadFromIndexedDbOnly();
+        const payload = buildStatePayload();
+        if (payload.habits.length > 0) {
+          await fetch("/api/habits", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }).catch(() => {});
+        }
+        setStorageStatus(
+          true,
+          habits.length === 0
+            ? "No habits yet — SQLite via day-scheduler server."
+            : `${habits.length} habit(s) · migrated to SQLite.`,
+        );
+        return;
+      }
+    } catch (_) {
+      /* same-origin API unavailable */
+    }
+    useHabitsRestApi = false;
+    await loadFromIndexedDbOnly();
   }
 
   function flushBackupSync() {
@@ -1191,7 +1253,7 @@
     const startField = document.getElementById("start-input");
     if (startField) startField.value = todayISO();
     try {
-      await loadFromIndexedDb();
+      await loadInitialState();
       if (habits.length && !selectedId) selectedId = habits[0].id;
       setStorageStatus(
         true,
