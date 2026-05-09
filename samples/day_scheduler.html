@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Day scheduler</title>
+  <style>
+    :root {
+      --border: #ddd;
+      --bg: #fafafa;
+      --text: #1a1a1a;
+      --muted: #666;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      min-height: 100vh;
+      gap: 0;
+    }
+    .col {
+      border-right: 1px solid var(--border);
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .col:last-child { border-right: none; }
+    .col-header {
+      flex: 0 0 auto;
+      padding: 0.5rem 0.75rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+    }
+    .col-header.flex-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+    .llm-pill {
+      font-weight: normal;
+      font-size: 0.75rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+      white-space: nowrap;
+      max-width: 55%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .llm-pill.online {
+      background: #e8f5e9;
+      border-color: #a5d6a7;
+      color: #1b5e20;
+    }
+    .llm-pill.offline {
+      background: #ffebee;
+      border-color: #ef9a9a;
+      color: #b71c1c;
+    }
+    .col-body {
+      flex: 1 1 auto;
+      overflow: hidden;
+      min-height: 0;
+    }
+    #habits-frame {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+      background: #fff;
+    }
+    #agenda-body {
+      padding: 0.65rem 0.85rem;
+      overflow: auto;
+      font-size: 0.92rem;
+    }
+    .date-line {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+    .banner-pre {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 0.78rem;
+      margin: 0 0 0.6rem;
+      white-space: pre-wrap;
+      color: #333;
+    }
+    #agenda-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    #agenda-list li {
+      padding: 0.35rem 0;
+      border-bottom: 1px solid #eee;
+    }
+    #agenda-list li span.time { color: #0a56c5; margin-right: 0.35rem; }
+    #agenda-fallback-pre {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      margin: 0;
+    }
+    #chat-scroll {
+      flex: 1 1 auto;
+      overflow: auto;
+      padding: 0.65rem;
+      background: #f5f5f5;
+    }
+    .msg {
+      margin-bottom: 0.6rem;
+      padding: 0.45rem 0.65rem;
+      border-radius: 6px;
+      max-width: 100%;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user {
+      margin-left: 1rem;
+      background: #dceaff;
+      border: 1px solid #bcd6f5;
+    }
+    .msg.assistant {
+      margin-right: 1rem;
+      background: #fff;
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .msg-thinking {
+      color: #9a9a9a;
+      font-size: 0.82rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 10rem;
+      overflow: hidden;
+      transition:
+        opacity 0.48s ease,
+        max-height 0.52s ease,
+        margin 0.45s ease;
+    }
+    .msg-thinking.thinking-fading {
+      opacity: 0;
+      max-height: 0;
+      margin: 0;
+      pointer-events: none;
+    }
+    .msg-thinking:empty {
+      display: none;
+    }
+    .chat-compose {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--border);
+      padding: 0.45rem;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .chat-compose textarea {
+      width: 100%;
+      resize: vertical;
+      min-height: 3rem;
+      max-height: 10rem;
+      padding: 0.45rem;
+      font-family: inherit;
+      font-size: 0.9rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .chat-row {
+      display: flex;
+      gap: 0.35rem;
+      align-items: center;
+    }
+    button {
+      padding: 0.4rem 0.75rem;
+      cursor: pointer;
+      background: #eee;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+    button:hover { background: #e5e5e5; }
+    button.primary { background: #2a67d9; color: #fff; border-color: #1f52ae; }
+    button.primary:hover { background: #255bb8; }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .status {
+      font-size: 0.8rem;
+      color: var(--muted);
+      min-height: 1rem;
+    }
+    .subhead {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #444;
+      margin: 0.35rem 0 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    #habits-from-builder-list {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 0.75rem;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 0.65rem;
+    }
+    #habits-from-builder-list li {
+      padding: 0.25rem 0;
+      font-size: 0.88rem;
+    }
+    #habits-from-builder-list li .hb-title { font-weight: 500; }
+    #habits-from-builder-list li .hb-meta {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    #habits-builder-hint {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    <section class="col">
+      <div class="col-header">Habits</div>
+      <div class="col-body">
+        <iframe
+          id="habits-frame"
+          src="habit_builder.html?embed=1"
+          title="Habit builder"
+        ></iframe>
+      </div>
+    </section>
+
+    <section class="col">
+      <div class="col-header">Today's agenda</div>
+      <div class="col-body" id="agenda-body">
+        <div class="date-line" id="today-label"></div>
+        <div class="subhead">Habit Builder</div>
+        <p class="muted" id="habits-builder-hint" hidden></p>
+        <ul id="habits-from-builder-list"></ul>
+        <div class="subhead">Planned blocks</div>
+        <pre class="banner-pre" id="agenda-banner" hidden></pre>
+        <ul id="agenda-list"></ul>
+        <pre id="agenda-fallback-pre" hidden></pre>
+      </div>
+    </section>
+
+    <section class="col">
+      <div class="col-header flex-head">
+        <span>Day planner chat</span>
+        <span class="llm-pill muted" id="llm-status-pill" title="mlx_llm_gateway.py">LLM …</span>
+      </div>
+      <div class="col-body" style="display:flex;flex-direction:column;background:#f5f5f5">
+        <div id="chat-scroll" aria-live="polite"></div>
+        <div class="chat-compose">
+          <div class="status" id="chat-status"></div>
+          <textarea id="prompt" placeholder="Describe your day, updates, completions…"></textarea>
+          <div class="chat-row">
+            <button type="button" id="send" class="primary">Send</button>
+            <button type="button" id="clear-thread">Clear</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+(function () {
+  const chatScroll = document.getElementById("chat-scroll");
+  const agendaBanner = document.getElementById("agenda-banner");
+  const agendaList = document.getElementById("agenda-list");
+  const agendaFallback = document.getElementById("agenda-fallback-pre");
+  const habitsUl = document.getElementById("habits-from-builder-list");
+  const habitsHint = document.getElementById("habits-builder-hint");
+  const todayLabel = document.getElementById("today-label");
+  const promptEl = document.getElementById("prompt");
+  const sendBtn = document.getElementById("send");
+  const clearBtn = document.getElementById("clear-thread");
+  const statusEl = document.getElementById("chat-status");
+  const llmPill = document.getElementById("llm-status-pill");
+
+  /** @type {boolean} */
+  let llmOnline = false;
+  /** @type {boolean} */
+  let requestInFlight = false;
+
+  function refreshSendEnabled() {
+    sendBtn.disabled = !llmOnline || requestInFlight;
+    promptEl.disabled = requestInFlight;
+  }
+
+  async function pollLlmHealth() {
+    try {
+      const r = await fetch("/llm-health", { cache: "no-store" });
+      const j = await r.json().catch(function () {
+        return {};
+      });
+      llmOnline = !!j.online;
+      llmPill.classList.remove("muted", "online", "offline");
+      if (llmOnline) {
+        llmPill.classList.add("online");
+        const loaded = j.model_loaded ? " · model OK" : "";
+        llmPill.textContent = "LLM API online" + loaded;
+      } else {
+        llmPill.classList.add("offline");
+        llmPill.textContent = "Offline — uv run mlx_llm_gateway.py";
+      }
+      llmPill.title =
+        typeof j.detail === "string"
+          ? j.detail
+          : j.upstream
+            ? "Upstream " + String(j.upstream)
+            : "LLM gateway";
+    } catch (e) {
+      llmOnline = false;
+      llmPill.classList.remove("muted", "online", "offline");
+      llmPill.classList.add("offline");
+      llmPill.textContent = "Status error";
+      llmPill.title = String(e && e.message ? e.message : e);
+    }
+    refreshSendEnabled();
+  }
+
+  void pollLlmHealth();
+  setInterval(function () {
+    void pollLlmHealth();
+  }, 10000);
+
+  /** Past turns for /chat; use ``chatHistory`` (never ``history`` — that is ``window.history``). */
+  /** @type {{role: string, content: string}[]} */
+  let chatHistory = [];
+
+  const HABIT_DB_NAME = "scheduler-habit-builder-db";
+  const HABIT_DB_VERSION = 1;
+  const HABIT_STORE = "state";
+  const HABIT_LS_BACKUP = "scheduler-habit-builder-backup";
+
+  /** @type {{ id: string, title: string, start: string, days: Record<string, boolean> }[]} */
+  let latestHabits = [];
+
+  const SCHED_LINE = /^\*\s*\[([^\]]+)\]\s*-\s*(.+?)\s*-\s*(\d+h\d+m)\s*$/;
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  function localDateISO(d) {
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+
+  function openHabitDb() {
+    return new Promise(function (resolve, reject) {
+      const req = indexedDB.open(HABIT_DB_NAME, HABIT_DB_VERSION);
+      req.onerror = function () {
+        reject(req.error);
+      };
+      req.onupgradeneeded = function (e) {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(HABIT_STORE)) {
+          db.createObjectStore(HABIT_STORE, { keyPath: "id" });
+        }
+      };
+      req.onsuccess = function () {
+        resolve(req.result);
+      };
+    });
+  }
+
+  async function readHabitStateRow() {
+    try {
+      const db = await openHabitDb();
+      return await new Promise(function (resolve, reject) {
+        const tx = db.transaction(HABIT_STORE, "readonly");
+        const q = tx.objectStore(HABIT_STORE).get("default");
+        q.onsuccess = function () {
+          resolve(q.result ?? null);
+        };
+        q.onerror = function () {
+          reject(q.error);
+        };
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function habitsFromLsBackup() {
+    try {
+      const raw = localStorage.getItem(HABIT_LS_BACKUP);
+      if (!raw) return null;
+      const row = JSON.parse(raw);
+      if (!row || !Array.isArray(row.habits)) return null;
+      return row;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function normalizeHabitShell(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const id = typeof raw.id === "string" ? raw.id : null;
+    const title = typeof raw.title === "string" ? raw.title : "";
+    const start = typeof raw.start === "string" ? raw.start : "";
+    const days =
+      raw.days && typeof raw.days === "object" && !Array.isArray(raw.days) ? { ...raw.days } : {};
+    if (!id) return null;
+    return { id, title, start, days };
+  }
+
+  async function loadHabitsFromBuilderStorage() {
+    let row = await readHabitStateRow();
+    if (!row || !Array.isArray(row.habits)) row = habitsFromLsBackup();
+    if (!row || !Array.isArray(row.habits)) return [];
+
+    const out = [];
+    for (let i = 0; i < row.habits.length; i++) {
+      const h = normalizeHabitShell(row.habits[i]);
+      if (h) out.push(h);
+    }
+    return out;
+  }
+
+  async function syncHabitsFromStorage() {
+    latestHabits = await loadHabitsFromBuilderStorage();
+    renderHabitsInAgenda(latestHabits);
+    return latestHabits;
+  }
+
+  function renderHabitsInAgenda(habits) {
+    habitsUl.innerHTML = "";
+    const todayIso = localDateISO(new Date());
+    if (!habits.length) {
+      habitsHint.textContent =
+        "Add habits in the left panel — same IndexedDB/localStorage as the builder.";
+      habitsHint.hidden = false;
+      return;
+    }
+    habitsHint.hidden = true;
+    for (let i = 0; i < habits.length; i++) {
+      const h = habits[i];
+      const li = document.createElement("li");
+      const tit = document.createElement("span");
+      tit.className = "hb-title";
+      tit.textContent = h.title || "(untitled)";
+      li.appendChild(tit);
+      const meta = document.createElement("span");
+      meta.className = "hb-meta";
+      let bits = "";
+      if (h.start) bits += " · since " + h.start;
+      if (h.days && h.days[todayIso]) bits += " · logged today";
+      meta.textContent = bits;
+      li.appendChild(meta);
+      habitsUl.appendChild(li);
+    }
+  }
+
+  function buildHabitsBlockForModel(habits) {
+    if (!habits.length) return "";
+    const cap = habits.slice(0, 48);
+    const bullets = [];
+    for (let i = 0; i < cap.length; i++) {
+      const h = cap[i];
+      let line = "- " + (h.title || "(habit)");
+      if (h.start) line += " (program start " + h.start + ")";
+      bullets.push(line);
+    }
+    return (
+      bullets.join("\n") +
+      "\n\nBlend these recurring habits into today's schedule where they belong; keep all " +
+      "obligations the user states explicitly."
+    );
+  }
+
+  function todayHeading() {
+    const d = new Date();
+    const nice = new Intl.DateTimeFormat(undefined, {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    }).format(d);
+    todayLabel.textContent = "Today — " + nice;
+  }
+
+  function extractBannerLines(text) {
+    const lines = text.split(/\r?\n/);
+    const banner = [];
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+      if (/^[╭│╰]/.test(ln)) {
+        banner.push(ln);
+        if (/^╰/.test(ln)) break;
+      }
+    }
+    return banner.length ? banner.join("\n") : "";
+  }
+
+  function parseTasks(text) {
+    const tasks = [];
+    for (const line of text.split(/\r?\n/)) {
+      const m = line.match(SCHED_LINE);
+      if (m) tasks.push({ time: m[1], title: m[2].trim(), dur: m[3] });
+    }
+    return tasks;
+  }
+
+  function refreshLlmSchedule(assistantRaw) {
+    agendaList.innerHTML = "";
+    agendaBanner.hidden = true;
+    agendaFallback.hidden = true;
+    agendaFallback.textContent = "";
+
+    const banner = extractBannerLines(assistantRaw);
+    const tasks = parseTasks(assistantRaw);
+
+    if (banner) {
+      agendaBanner.textContent = banner;
+      agendaBanner.hidden = false;
+    }
+
+    if (tasks.length) {
+      for (const t of tasks) {
+        const li = document.createElement("li");
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "time";
+        timeSpan.textContent = "[" + t.time + "]";
+        li.appendChild(timeSpan);
+        li.appendChild(document.createTextNode(" " + t.title + " · " + t.dur));
+        agendaList.appendChild(li);
+      }
+      return;
+    }
+
+    agendaFallback.textContent = assistantRaw.trim() || "(no plan yet)";
+    agendaFallback.hidden = false;
+  }
+
+  function scrollChat() {
+    chatScroll.scrollTop = chatScroll.scrollHeight;
+  }
+
+  /** @returns {{ wrap: HTMLElement, thinking: HTMLElement, body: HTMLElement, thinkingQueue: string[], thinkingRaf: number | null }} */
+  function assistantMessageShell() {
+    const wrap = document.createElement("div");
+    wrap.className = "msg assistant";
+    const thinkingEl = document.createElement("div");
+    thinkingEl.className = "msg-thinking";
+    thinkingEl.setAttribute("aria-label", "Model reasoning preview");
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "msg-body";
+    wrap.appendChild(thinkingEl);
+    wrap.appendChild(bodyEl);
+    chatScroll.appendChild(wrap);
+    scrollChat();
+    return {
+      wrap: wrap,
+      thinking: thinkingEl,
+      body: bodyEl,
+      thinkingQueue: [],
+      thinkingRaf: null,
+    };
+  }
+
+  /** Token-ish / word-ish pieces so the gray reasoning paints like MLX terminal streaming. */
+  function splitThinkingRevealUnits(s) {
+    if (!s) return [];
+    const out = [];
+    const re = /\S+|\s+/g;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+      let piece = m[0];
+      if (piece.length > 28 && /^\S+$/.test(piece)) {
+        const step = 4;
+        for (let j = 0; j < piece.length; j += step) {
+          out.push(piece.slice(j, j + step));
+        }
+      } else {
+        out.push(piece);
+      }
+    }
+    return out.length ? out : [s];
+  }
+
+  /** @param {{ thinking: HTMLElement, thinkingQueue: string[], thinkingRaf: number | null }} shell */
+  function enqueueThinkingReveal(shell, text) {
+    const units = splitThinkingRevealUnits(text);
+    for (let i = 0; i < units.length; i++) {
+      shell.thinkingQueue.push(units[i]);
+    }
+    if (shell.thinkingRaf != null) return;
+    function tick() {
+      if (!shell.thinkingQueue.length) {
+        shell.thinkingRaf = null;
+        return;
+      }
+      shell.thinking.textContent += shell.thinkingQueue.shift();
+      scrollChat();
+      shell.thinkingRaf = requestAnimationFrame(tick);
+    }
+    shell.thinkingRaf = requestAnimationFrame(tick);
+  }
+
+  /** @param {{ thinking: HTMLElement, thinkingQueue: string[], thinkingRaf: number | null }} shell */
+  function fadeThinkingAway(shell) {
+    if (shell.thinkingRaf != null) {
+      cancelAnimationFrame(shell.thinkingRaf);
+      shell.thinkingRaf = null;
+    }
+    if (shell.thinkingQueue.length) {
+      shell.thinking.textContent += shell.thinkingQueue.join("");
+      shell.thinkingQueue.length = 0;
+      scrollChat();
+    }
+    const thEl = shell.thinking;
+    if (!thEl || thEl.dataset.faded === "1") return;
+    if (!String(thEl.textContent || "").trim()) {
+      return;
+    }
+    thEl.dataset.faded = "1";
+    thEl.classList.add("thinking-fading");
+    window.setTimeout(function () {
+      thEl.textContent = "";
+      thEl.classList.remove("thinking-fading");
+      delete thEl.dataset.faded;
+    }, 520);
+  }
+
+  /** @returns {HTMLElement} */
+  function bubble(role, content) {
+    if (role === "assistant") {
+      const shell = assistantMessageShell();
+      shell.body.textContent = content;
+      return shell.wrap;
+    }
+    const div = document.createElement("div");
+    div.className = "msg " + role;
+    div.textContent = content;
+    chatScroll.appendChild(div);
+    scrollChat();
+    return div;
+  }
+
+  function setBusy(b) {
+    requestInFlight = b;
+    statusEl.textContent = b ? "Thinking…" : "";
+    refreshSendEnabled();
+  }
+
+  async function handleSend() {
+    const raw = promptEl.value.trim();
+    if (!raw) return;
+    if (!llmOnline) {
+      statusEl.textContent =
+        "LLM API offline — run: uv run --group samples-mlx python samples/mlx_llm_gateway.py";
+      return;
+    }
+    await syncHabitsFromStorage();
+    const habitsBlock = buildHabitsBlockForModel(latestHabits);
+
+    promptEl.value = "";
+    bubble("user", raw);
+    setBusy(true);
+
+    const shell = assistantMessageShell();
+
+    function assistantErr(msg) {
+      shell.body.textContent = msg;
+    }
+
+    try {
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          history: chatHistory,
+          content: raw,
+          habits_block: habitsBlock,
+        }),
+      });
+      if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => "");
+        assistantErr("Request failed (" + res.status + "): " + errText);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      /** @type {string} */
+      let fullAssistant = "";
+      /** @type {string} */
+      let streamedChat = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let evt;
+          try {
+            evt = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (evt.type === "thinking_end") {
+            fadeThinkingAway(shell);
+          }
+          if (evt.type === "delta" && typeof evt.text === "string") {
+            if (evt.phase === "thinking") {
+              enqueueThinkingReveal(shell, evt.text);
+            } else {
+              fadeThinkingAway(shell);
+              streamedChat += evt.text;
+              shell.body.textContent = streamedChat;
+              scrollChat();
+            }
+          }
+          if (evt.type === "done") {
+            if (Array.isArray(evt.history)) {
+              chatHistory = evt.history.filter(
+                function (h) {
+                  return h && (h.role === "user" || h.role === "assistant") &&
+                    typeof h.content === "string";
+                }
+              );
+            }
+            if (typeof evt.assistant === "string" && evt.assistant)
+              fullAssistant = evt.assistant;
+
+            fadeThinkingAway(shell);
+
+            if (evt.ok === false && evt.error) {
+              assistantErr("Error: " + evt.error);
+            } else if (typeof evt.chat === "string" && evt.chat.trim()) {
+              shell.body.textContent = evt.chat.trim();
+            } else if (streamedChat.trim()) {
+              shell.body.textContent = streamedChat.trim();
+            } else if (fullAssistant) {
+              shell.body.textContent = fullAssistant;
+            }
+
+            refreshLlmSchedule(fullAssistant);
+          }
+        }
+      }
+
+      refreshLlmSchedule(fullAssistant);
+    } catch (e) {
+      assistantErr(String(e && e.message ? e.message : e));
+    } finally {
+      setBusy(false);
+      scrollChat();
+      void pollLlmHealth();
+    }
+  }
+
+  sendBtn.addEventListener("click", handleSend);
+  promptEl.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
+      ev.preventDefault();
+      handleSend();
+    }
+  });
+
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== window.location.origin) return;
+    const d = ev.data;
+    if (d && d.source === "scheduler-habit-builder" && d.type === "habits-updated") {
+      void syncHabitsFromStorage();
+    }
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) void syncHabitsFromStorage();
+  });
+
+  const habitsFrameEl = document.getElementById("habits-frame");
+  if (habitsFrameEl) {
+    habitsFrameEl.addEventListener("load", function () {
+      void syncHabitsFromStorage();
+    });
+  }
+
+  clearBtn.addEventListener("click", function () {
+    chatHistory = [];
+    chatScroll.innerHTML = "";
+    refreshLlmSchedule("");
+    statusEl.textContent = "(thread cleared)";
+  });
+
+  todayHeading();
+  void syncHabitsFromStorage().then(function () {
+    refreshLlmSchedule("");
+  });
+})();
+  </script>
+</body>
+</html>

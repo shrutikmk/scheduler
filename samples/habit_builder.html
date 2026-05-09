@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Habit Builder</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 720px;
+      margin: 1rem auto;
+      padding: 0 1rem;
+      color: #1a1a1a;
+      line-height: 1.4;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+    input[type="text"] { flex: 1; min-width: 12rem; padding: 0.4rem 0.5rem; }
+    button {
+      padding: 0.4rem 0.75rem;
+      cursor: pointer;
+      background: #eee;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button:hover { background: #e5e5e5; }
+    button.danger { color: #a00; }
+    .habits { list-style: none; padding: 0; margin: 0 0 1rem; border: 1px solid #ddd; border-radius: 4px; }
+    .habits li {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .habits li:last-child { border-bottom: none; }
+    .habits li.active { background: #f0f7ff; }
+    .muted { color: #666; font-size: 0.85rem; }
+    .panel { border: 1px solid #ddd; border-radius: 4px; padding: 0.75rem 1rem; margin-bottom: 1rem; }
+    .bar {
+      height: 10px;
+      background: #e8e8e8;
+      border-radius: 5px;
+      overflow: hidden;
+      margin: 0.35rem 0;
+    }
+    .bar .fill {
+      height: 100%;
+      background: #2a7;
+      border-radius: 5px;
+      width: 0%;
+      transition: width 0.2s ease;
+    }
+    .cal-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 2px;
+      font-size: 0.8rem;
+    }
+    .cal-grid .dow { text-align: center; font-weight: 600; padding: 0.25rem; color: #555; }
+    .cal-grid .cell {
+      aspect-ratio: 1;
+      border: 1px solid #e0e0e0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: #fff;
+      border-radius: 4px;
+    }
+    /* Adjacent month: light shell only — marked days use same green as in-month (.cell.other.done). */
+    .cal-grid .cell.other {
+      background: #f2f3f5;
+      color: #5c5c5c;
+      border-style: dashed;
+      border-color: #d4d4d4;
+    }
+    .cal-grid .cell.other.done {
+      background: #cfead9;
+      color: #1e4628;
+      font-weight: 600;
+      border-style: solid;
+      border-color: #b0d4be;
+      opacity: 1;
+    }
+    .cal-grid .cell.before-start { cursor: not-allowed; opacity: 0.45; }
+    .cal-grid .cell.other.before-start { opacity: 0.55; }
+    .cal-grid .cell.done { background: #cfead9; font-weight: 600; }
+    .cal-grid .cell.rest-block { outline: 2px solid #c9a227; cursor: not-allowed; }
+    .rules { font-size: 0.8rem; color: #555; margin-top: 1rem; }
+    .upcoming {
+      margin: 0.5rem 0 0.75rem;
+      padding: 0.5rem 0;
+      border-top: 1px solid #eee;
+      font-size: 0.9rem;
+    }
+    .upcoming div { margin: 0.2rem 0; }
+    label.start-label {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.9rem;
+      color: #444;
+    }
+    .habit-list-hint {
+      margin: 0 0 0.5rem;
+      font-size: 0.85rem;
+    }
+    html.embed-shell,
+    html.embed-shell body {
+      height: 100%;
+      margin: 0;
+    }
+    html.embed-shell body {
+      max-width: none;
+      padding: 0.5rem 0.45rem;
+      overflow-x: hidden;
+    }
+    html.embed-shell h1 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+    html.embed-shell .rules { display: none; }
+  </style>
+</head>
+<body>
+  <script>
+    if (/\bembed=1\b/.test(location.search)) {
+      document.documentElement.classList.add("embed-shell");
+    }
+  </script>
+  <h1>Habit Builder</h1>
+  <p id="storage-status" class="muted" style="margin: 0 0 0.75rem">Loading saved data…</p>
+
+  <div class="row" style="margin-bottom: 0.75rem">
+    <button type="button" id="export-backup">Export backup (JSON)</button>
+    <button type="button" id="import-backup-trigger">Import backup…</button>
+    <input type="file" id="import-backup-input" accept="application/json,.json" hidden />
+  </div>
+
+  <div class="row">
+    <input type="text" id="title-input" placeholder="Habit title" maxlength="120" />
+    <label class="start-label"
+      >Start
+      <input type="date" id="start-input" aria-label="Program start date (day 0 of week 1)" /></label
+    >
+    <button type="button" id="add-habit">Add</button>
+  </div>
+
+  <p id="habit-list-hint" class="habit-list-hint muted" hidden></p>
+
+  <ul class="habits" id="habit-list" aria-label="Habits"></ul>
+
+  <div id="detail" class="panel" hidden>
+    <div class="row" style="justify-content: space-between">
+      <strong id="detail-title"></strong>
+      <button type="button" class="danger" id="delete-habit">Delete habit</button>
+    </div>
+    <div class="row">
+      <label class="start-label"
+        >Program start
+        <input type="date" id="detail-start-input" aria-label="Change program start date" /></label
+      >
+    </div>
+    <div id="detail-status" class="muted"></div>
+    <div class="bar" title="Progress"><div class="fill" id="progress-fill"></div></div>
+    <div id="detail-pct"></div>
+    <div id="detail-upcoming" class="upcoming" hidden></div>
+
+    <div class="cal-nav">
+      <button type="button" id="cal-prev" aria-label="Previous month">←</button>
+      <strong id="cal-label"></strong>
+      <button type="button" id="cal-next" aria-label="Next month">→</button>
+    </div>
+    <div class="cal-grid" id="cal-root"></div>
+  </div>
+
+  <p class="rules">
+    Phase 1 uses seven <strong>Sunday–Saturday</strong> calendar weeks. Week 1 is the week that contains your program
+    start; week <em>k</em> needs <em>k</em> logged days anywhere that week (only on/after your start date counts). After
+    phase 1, streaks of 8…90 days with one rest day
+    after each streak except after the final 90-day streak. Missing a habit day resets the current streak only (finished
+    streaks stay counted). Highlighted empty days are required rest — leave them unchecked. 100% = 4095 points.
+    Your habits are written to the browser’s <strong>IndexedDB</strong> database
+    (<code>scheduler-habit-builder-db</code>) after <strong>every</strong> change (toggle day, start date, add/delete habit,
+    switch selection). The same snapshot is mirrored to <strong>localStorage</strong> for recovery if IndexedDB fails.
+    Data stay on this device only — clearing site data removes them. There is no cloud backup.
+    Use <strong>Export backup</strong> to download JSON (save it under <code>scheduler/backups/</code> in the repo if you
+    like). Use <strong>Import backup</strong> to restore from that file; the browser cannot write into the repo by itself.
+    You can toggle any day on or after <strong>program start</strong> (including future calendar days). You can
+    track <strong>multiple habits</strong> — each has its own start date, calendar, and progress bar.
+  </p>
+
+  <script>
+(function () {
+  const LEGACY_STORAGE_KEY = "scheduler-habit-builder";
+  /** Synchronous JSON mirror of the same payload as IndexedDB — updated on every persist and on tab close. */
+  const LOCAL_BACKUP_KEY = "scheduler-habit-builder-backup";
+  const DB_NAME = "scheduler-habit-builder-db";
+  const DB_VERSION = 1;
+  const STORE_NAME = "state";
+  const TOTAL_POINTS = 4095; // 28 + sum(8..90)
+
+  /** Show enough fractional digits that +1 point (~100/4095 %) is visible. */
+  function formatProgressPct(pct) {
+    const p = Math.min(100, Math.max(0, pct));
+    if (p >= 100) return "100";
+    return p.toFixed(4);
+  }
+
+  /** @type {Promise<IDBDatabase> | null} */
+  let dbPromise = null;
+
+  function openDb() {
+    if (!dbPromise) {
+      dbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onerror = () => reject(req.error);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: "id" });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+      });
+    }
+    return dbPromise;
+  }
+
+  /** @returns {Promise<{ id: string, habits: unknown[], selectedId: string | null } | null>} */
+  async function readStateRow() {
+    const db = await openDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const q = tx.objectStore(STORE_NAME).get("default");
+      q.onsuccess = () => resolve(q.result ?? null);
+      q.onerror = () => reject(q.error);
+    });
+  }
+
+  function normalizeHabit(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const id = typeof raw.id === "string" ? raw.id : null;
+    const title = typeof raw.title === "string" ? raw.title : "";
+    const start = typeof raw.start === "string" ? raw.start : todayISO();
+    const days =
+      raw.days && typeof raw.days === "object" && !Array.isArray(raw.days) ? { ...raw.days } : {};
+    for (const k of Object.keys(days)) {
+      if (!days[k]) delete days[k];
+    }
+    if (!id) return null;
+    return { id, title, start, days };
+  }
+
+  function migrateFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data)) return null;
+      const habitsNorm = [];
+      for (const item of data) {
+        const h = normalizeHabit(item);
+        if (h) habitsNorm.push(h);
+      }
+      return {
+        id: "default",
+        habits: habitsNorm,
+        selectedId: habitsNorm[0]?.id ?? null,
+        migratedFrom: "localStorage",
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function writeStateRow(row) {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.oncomplete = () => resolve(undefined);
+      tx.onerror = () => reject(tx.error);
+      tx.objectStore(STORE_NAME).put({
+        ...row,
+        updatedAt: row.updatedAt ?? Date.now(),
+      });
+    });
+  }
+
+  function setStorageStatus(ok, msg) {
+    const el = document.getElementById("storage-status");
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.toggle("muted", ok);
+    el.style.color = ok ? "" : "#a00";
+  }
+
+  /** @type {{ id: string, title: string, start: string, days: Record<string, boolean> }[]} */
+  let habits = [];
+  /** @type {string | null} */
+  let selectedId = null;
+  let viewYear = new Date().getFullYear();
+  let viewMonth = new Date().getMonth();
+
+  function ingestStorageRow(row) {
+    const list = [];
+    for (const item of row.habits) {
+      const h = normalizeHabit(item);
+      if (h) list.push(h);
+    }
+    habits = list;
+    let sid = typeof row.selectedId === "string" ? row.selectedId : null;
+    if (!habits.some((x) => x.id === sid)) sid = habits[0]?.id ?? null;
+    selectedId = sid;
+  }
+
+  function buildStatePayload() {
+    return {
+      id: "default",
+      habits: habits.map((h) => ({
+        id: h.id,
+        title: h.title,
+        start: h.start,
+        days: { ...(h.days || {}) },
+      })),
+      selectedId,
+      updatedAt: Date.now(),
+    };
+  }
+
+  function mirrorLocalStorageBackup() {
+    try {
+      localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify(buildStatePayload()));
+    } catch (e) {
+      console.warn("habit-builder: localStorage mirror failed", e);
+    }
+  }
+
+  function tryRestoreFromLocalBackup() {
+    try {
+      const raw = localStorage.getItem(LOCAL_BACKUP_KEY);
+      if (!raw) return false;
+      const row = JSON.parse(raw);
+      if (!row || !Array.isArray(row.habits)) return false;
+      ingestStorageRow(row);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function notifyParentDaySchedulerShell() {
+    try {
+      if (window.parent === window) return;
+      window.parent.postMessage(
+        { source: "scheduler-habit-builder", type: "habits-updated" },
+        window.location.origin,
+      );
+    } catch (_) {}
+  }
+
+  async function persistState() {
+    const payload = buildStatePayload();
+    mirrorLocalStorageBackup();
+    await writeStateRow(payload);
+    setStorageStatus(
+      true,
+      habits.length === 0
+        ? "No habits yet — changes save to IndexedDB + localStorage backup on every action."
+        : `${habits.length} habit(s) · auto-saved to IndexedDB and localStorage on each change.`,
+    );
+    notifyParentDaySchedulerShell();
+  }
+
+  function save() {
+    void persistState().catch((e) => {
+      console.error("habit-builder: persist failed (IndexedDB)", e);
+      try {
+        mirrorLocalStorageBackup();
+      } catch (_) {}
+    });
+  }
+
+  const BACKUP_EXPORT_VERSION = 1;
+
+  function backupFilenameTimestamp() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  }
+
+  function exportBackupToDownload() {
+    const base = buildStatePayload();
+    const payload = {
+      ...base,
+      exportVersion: BACKUP_EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+    };
+    const text = JSON.stringify(payload, null, 2);
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `habit-builder-backup-${backupFilenameTimestamp()}.json`;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function parseBackupJson(text) {
+    const obj = JSON.parse(text);
+    if (!obj || typeof obj !== "object") throw new Error("Not a JSON object");
+    if (!Array.isArray(obj.habits)) throw new Error("Missing habits array");
+    return obj;
+  }
+
+  function applyBackupObject(obj) {
+    ingestStorageRow({
+      id: typeof obj.id === "string" ? obj.id : "default",
+      habits: obj.habits,
+      selectedId: typeof obj.selectedId === "string" ? obj.selectedId : null,
+    });
+  }
+
+  async function loadFromIndexedDb() {
+    let row = null;
+    try {
+      row = await readStateRow();
+    } catch (e) {
+      console.warn("habit-builder: IndexedDB read failed", e);
+    }
+
+    if (row != null && Array.isArray(row.habits)) {
+      ingestStorageRow(row);
+      mirrorLocalStorageBackup();
+      return;
+    }
+
+    if (tryRestoreFromLocalBackup()) {
+      console.warn("habit-builder: restored from localStorage backup (IndexedDB missing or empty)");
+      try {
+        await writeStateRow(buildStatePayload());
+      } catch (e) {
+        console.error("habit-builder: could not sync restored state to IndexedDB", e);
+      }
+      return;
+    }
+
+    const migrated = migrateFromLocalStorage();
+    if (migrated && migrated.habits.length > 0) {
+      habits = migrated.habits;
+      selectedId = migrated.selectedId;
+      await writeStateRow(buildStatePayload());
+      mirrorLocalStorageBackup();
+      try {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      } catch (_) {}
+    }
+  }
+
+  function flushBackupSync() {
+    try {
+      mirrorLocalStorageBackup();
+    } catch (_) {}
+  }
+
+  function todayISO() {
+    const t = new Date();
+    return ymd(t.getFullYear(), t.getMonth() + 1, t.getDate());
+  }
+
+  function pad(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  function ymd(y, m, d) {
+    return `${y}-${pad(m)}-${pad(d)}`;
+  }
+
+  function parseISODate(s) {
+    const [y, m, d] = s.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  function addDaysISO(iso, delta) {
+    const dt = parseISODate(iso);
+    dt.setDate(dt.getDate() + delta);
+    return ymd(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+  }
+
+  function daysDiff(isoA, isoB) {
+    const a = parseISODate(isoA).getTime();
+    const b = parseISODate(isoB).getTime();
+    return Math.round((b - a) / 86400000);
+  }
+
+  /** Drop logged days that fall before the habit’s current program start (e.g. after correcting start). */
+  function stripMarksBeforeStart(h) {
+    if (!h.days) return;
+    for (const k of Object.keys(h.days)) {
+      if (daysDiff(h.start, k) < 0) delete h.days[k];
+    }
+  }
+
+  function uuid() {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  /** Marks → sorted ISO date strings */
+  function markedDates(h) {
+    return Object.keys(h.days || {}).filter((k) => h.days[k]).sort();
+  }
+
+  /** Furthest date we need for phase-2 simulation: today or latest mark, whichever is later (ISO date order). */
+  function maxDerivedScanISO(h) {
+    const marks = markedDates(h);
+    const t = todayISO();
+    if (!marks.length) return t;
+    const last = marks[marks.length - 1];
+    return last > t ? last : t;
+  }
+
+  /** Sunday (local) of the calendar week that contains `iso` (week = Sun–Sat). */
+  function sundayOfWeekContaining(iso) {
+    const dt = parseISODate(iso);
+    const dow = dt.getDay();
+    dt.setDate(dt.getDate() - dow);
+    return ymd(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+  }
+
+  /**
+   * Phase 1 week index 0..6: Sun–Sat weeks; week 0 is the week containing program start.
+   * Only dates on/after startISO participate. Indices outside 0..6 return -1.
+   */
+  function weekIndexForDate(startISO, dateISO) {
+    if (daysDiff(startISO, dateISO) < 0) return -1;
+    const startSun = sundayOfWeekContaining(startISO);
+    const dateSun = sundayOfWeekContaining(dateISO);
+    const w = Math.floor(daysDiff(startSun, dateSun) / 7);
+    if (w < 0 || w > 6) return -1;
+    return w;
+  }
+
+  /** @returns {{ weekStart: string, weekEnd: string }} Sunday..Saturday ISO for phase-1 week index w (0..6). */
+  function phase1WeekRange(startISO, w) {
+    const sun0 = sundayOfWeekContaining(startISO);
+    const weekStart = addDaysISO(sun0, w * 7);
+    const weekEnd = addDaysISO(weekStart, 6);
+    return { weekStart, weekEnd };
+  }
+
+  /** @returns {{ actual: number[], required: number[], phase1Earned: number, phase1Satisfied: boolean }} */
+  function phase1Stats(startISO, marks) {
+    const actual = [0, 0, 0, 0, 0, 0, 0];
+    for (const iso of marks) {
+      if (daysDiff(startISO, iso) < 0) continue;
+      const w = weekIndexForDate(startISO, iso);
+      if (w >= 0 && w < 7) actual[w]++;
+    }
+    let phase1Earned = 0;
+    let satisfied = true;
+    for (let w = 0; w < 7; w++) {
+      const need = w + 1;
+      phase1Earned += Math.min(actual[w], need);
+      if (actual[w] < need) satisfied = false;
+    }
+    return { actual, phase1Earned, phase1Satisfied: satisfied };
+  }
+
+  /**
+   * Earliest D: max over w of the (need)-th marked date in week w (chronological within week).
+   * If any week lacks enough marks, returns null.
+   */
+  function phase2BoundaryDate(startISO, marks) {
+    const byWeek = Array.from({ length: 7 }, () => []);
+    for (const iso of marks) {
+      if (daysDiff(startISO, iso) < 0) continue;
+      const w = weekIndexForDate(startISO, iso);
+      if (w >= 0 && w < 7) byWeek[w].push(iso);
+    }
+    for (let w = 0; w < 7; w++) byWeek[w].sort();
+    let maxD = null;
+    for (let w = 0; w < 7; w++) {
+      const need = w + 1;
+      if (byWeek[w].length < need) return null;
+      const d = byWeek[w][need - 1];
+      if (maxD === null || daysDiff(maxD, d) > 0) maxD = d;
+    }
+    return maxD;
+  }
+
+  /**
+   * @returns {{ phase2Earned: number, complete: boolean, targetL: number, run: number, needRest: boolean, violation: boolean }}
+   */
+  function simulatePhase2(boundaryISO, marksSet, maxScanISO) {
+    const mark = new Set(marksSet);
+    let day = addDaysISO(boundaryISO, 1);
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let phase2Earned = 0;
+    let complete = false;
+    let violation = false;
+
+    let guard = 0;
+    while (daysDiff(day, maxScanISO) <= 0 && !complete && guard < 12000) {
+      guard++;
+      const done = mark.has(day);
+      if (needRest) {
+        if (done) {
+          violation = true;
+          break;
+        }
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else {
+        if (done) {
+          run++;
+          phase2Earned++;
+          if (run === targetL) {
+            run = 0;
+            if (targetL === 90) {
+              complete = true;
+            } else {
+              needRest = true;
+            }
+          }
+        } else {
+          run = 0;
+        }
+      }
+      day = addDaysISO(day, 1);
+    }
+
+    return { phase2Earned, complete, targetL, run, needRest, violation };
+  }
+
+  /**
+   * Re-run simulation tracking rest-window for UI.
+   */
+  function deriveRestDaySet(boundaryISO, marksSet) {
+    const set = new Set();
+    const mark = new Set(marksSet);
+    let day = addDaysISO(boundaryISO, 1);
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let complete = false;
+    const maxScanISO = addDaysISO(todayISO(), 365 * 5);
+    let guard = 0;
+    while (daysDiff(day, maxScanISO) <= 0 && !complete && guard < 12000) {
+      guard++;
+      const done = mark.has(day);
+      if (needRest) {
+        set.add(day);
+        if (done) break;
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else {
+        if (done) {
+          run++;
+          if (run === targetL) {
+            run = 0;
+            if (targetL === 90) complete = true;
+            else needRest = true;
+          }
+        } else {
+          run = 0;
+        }
+      }
+      day = addDaysISO(day, 1);
+    }
+    return set;
+  }
+
+  /**
+   * Phase-2 state at the **start** of `dayISO` (marks on that day not yet applied).
+   */
+  function stateAtStartOfDay(boundaryISO, marksSet, dayISO) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const firstP2 = addDaysISO(boundaryISO, 1);
+    if (daysDiff(dayISO, firstP2) < 0) {
+      return {
+        targetL: 8,
+        run: 0,
+        needRest: false,
+        violation: false,
+        beforePhase2: true,
+      };
+    }
+    let day = firstP2;
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let violation = false;
+    let guard = 0;
+    while (daysDiff(day, dayISO) < 0 && !violation && guard < 12000) {
+      guard++;
+      const done = mark.has(day);
+      if (needRest) {
+        if (done) {
+          violation = true;
+          break;
+        }
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else {
+        if (done) {
+          run++;
+          if (run === targetL) {
+            run = 0;
+            if (targetL === 90) {
+              /** program done; no further phase-2 expectations */
+            } else {
+              needRest = true;
+            }
+          }
+        } else {
+          run = 0;
+        }
+      }
+      day = addDaysISO(day, 1);
+    }
+    return { targetL, run, needRest, violation, beforePhase2: false };
+  }
+
+  function formatScheduleDay(iso) {
+    return parseISODate(iso).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  }
+
+  /** @returns {{ iso: string, backlog: boolean } | null} */
+  function nextHabitDayPhase1(h, actual, startISO, todayISO) {
+    for (let w = 0; w < 7; w++) {
+      const need = w + 1;
+      if (actual[w] >= need) continue;
+      const { weekStart, weekEnd } = phase1WeekRange(startISO, w);
+      let d = weekStart;
+      while (daysDiff(d, weekEnd) <= 0) {
+        if (daysDiff(h.start, d) < 0) {
+          d = addDaysISO(d, 1);
+          continue;
+        }
+        if (!h.days[d]) {
+          const backlog = daysDiff(todayISO, d) < 0;
+          return { iso: d, backlog };
+        }
+        d = addDaysISO(d, 1);
+      }
+    }
+    return null;
+  }
+
+  function nextRestFromSet(restDays, todayISO) {
+    let best = null;
+    for (const r of restDays) {
+      if (daysDiff(todayISO, r) < 0) continue;
+      if (best === null || r < best) best = r;
+    }
+    return best;
+  }
+
+  function nextHabitDayPhase2(boundaryISO, marksSet, todayISO, programComplete) {
+    if (programComplete) return null;
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const firstP2 = addDaysISO(boundaryISO, 1);
+    if (daysDiff(todayISO, firstP2) > 0) return firstP2;
+
+    let d = todayISO;
+    for (let i = 0; i < 800; i++) {
+      const st = stateAtStartOfDay(boundaryISO, mark, d);
+      if (st.violation) return null;
+      if (st.needRest) {
+        if (mark.has(d)) return null;
+        d = addDaysISO(d, 1);
+        continue;
+      }
+      if (!mark.has(d)) return d;
+      d = addDaysISO(d, 1);
+    }
+    return null;
+  }
+
+  function deriveHabit(h) {
+    const marks = markedDates(h);
+    const marksSet = new Set(marks);
+    const { actual, phase1Earned, phase1Satisfied } = phase1Stats(h.start, marks);
+
+    const boundary = phase1Satisfied ? phase2BoundaryDate(h.start, marks) : null;
+    const maxISO = maxDerivedScanISO(h);
+    let phase2Earned = 0;
+    let pct = (100 * phase1Earned) / TOTAL_POINTS;
+    let complete = false;
+    let sim = null;
+    let restDays = new Set();
+
+    if (boundary !== null) {
+      sim = simulatePhase2(boundary, marksSet, maxISO);
+      phase2Earned = sim.phase2Earned;
+      complete = sim.complete;
+      if (!sim.violation) {
+        pct = (100 * (phase1Earned + phase2Earned)) / TOTAL_POINTS;
+        if (complete) pct = 100;
+      }
+      restDays = deriveRestDaySet(boundary, marksSet);
+    }
+
+    const today = todayISO();
+    let status = "";
+    if (!phase1Satisfied) {
+      let rawW = weekIndexForDate(h.start, today);
+      let w = rawW;
+      if (w < 0) w = 0;
+      if (w > 6) {
+        let firstShort = -1;
+        for (let i = 0; i < 7; i++) {
+          if (actual[i] < i + 1) {
+            firstShort = i;
+            break;
+          }
+        }
+        w = firstShort >= 0 ? firstShort : 6;
+      }
+      const need = w + 1;
+      const incompleteEarlier = [];
+      for (let i = 0; i < w; i++) {
+        const n = i + 1;
+        if (actual[i] < n) incompleteEarlier.push(`${i + 1} (${actual[i]}/${n})`);
+      }
+      const backlog =
+        incompleteEarlier.length > 0
+          ? ` · earlier weeks still short: ${incompleteEarlier.join(", ")}`
+          : "";
+      status = `Phase 1 · week ${w + 1}/7 (Sun–Sat; week 1 contains program start) · this week: ${actual[w]}/${need} toward goal${backlog}. Pick any day Sun–Sat on/after start; week k needs k marks.`;
+    } else if (boundary === null) {
+      status = "Phase 1 complete (boundary error)";
+    } else if (sim && sim.violation) {
+      status = "Phase 2: fix rest days — you logged on a required rest day. Remove that mark.";
+    } else if (complete) {
+      status = "Complete — 90-day streak done.";
+    } else if (sim) {
+      const r = sim.needRest ? "log a rest day (leave today unchecked)" : `streak ${sim.run}/${sim.targetL}`;
+      status = `Phase 2 · target streak length ${sim.targetL} · ${r}`;
+    }
+
+    let nextRestLabel = "—";
+    let nextHabitLabel = "—";
+
+    if (daysDiff(today, h.start) > 0) {
+      nextHabitLabel = `${formatScheduleDay(h.start)} (habit hasn’t started)`;
+      nextRestLabel = "— (streak rests start in phase 2)";
+    } else if (!phase1Satisfied) {
+      const nh = nextHabitDayPhase1(h, actual, h.start, today);
+      nextRestLabel = "— (phase 1 has no rest days)";
+      if (nh) {
+        nextHabitLabel = nh.backlog
+          ? `${formatScheduleDay(nh.iso)} — catch up (earlier week still short)`
+          : formatScheduleDay(nh.iso);
+      }
+    } else if (boundary === null) {
+      nextRestLabel = "—";
+      nextHabitLabel = "—";
+    } else if (sim && sim.violation) {
+      nextRestLabel = "—";
+      nextHabitLabel = "— (fix rest violation first)";
+    } else if (complete) {
+      nextRestLabel = "None (finished)";
+      nextHabitLabel = "None (finished)";
+    } else {
+      const nr = nextRestFromSet(restDays, today);
+      nextRestLabel = nr ? `${formatScheduleDay(nr)} (leave unchecked)` : "—";
+      const nh = nextHabitDayPhase2(boundary, marksSet, today, complete);
+      if (nh) {
+        nextHabitLabel =
+          daysDiff(today, nh) === 0 ? `${formatScheduleDay(nh)} (today)` : formatScheduleDay(nh);
+      } else {
+        nextHabitLabel = "—";
+      }
+    }
+
+    return {
+      phase1Earned,
+      phase2Earned,
+      pct: Math.min(100, Math.max(0, pct)),
+      status,
+      complete,
+      boundary,
+      phase1Satisfied,
+      restDays,
+      sim,
+      nextRestLabel,
+      nextHabitLabel,
+    };
+  }
+
+  /**
+   * @param {boolean} turningOn – true if click would mark the day done
+   */
+  function canToggleDay(h, iso, derived, turningOn) {
+    if (daysDiff(h.start, iso) < 0) return { ok: false, reason: "before-start" };
+    if (derived.restDays.has(iso) && turningOn) return { ok: false, reason: "rest-required" };
+    return { ok: true };
+  }
+
+  function renderList() {
+    const ul = document.getElementById("habit-list");
+    ul.innerHTML = "";
+    if (habits.length === 0) {
+      const hintEmpty = document.getElementById("habit-list-hint");
+      if (hintEmpty) hintEmpty.hidden = true;
+      const li = document.createElement("li");
+      li.className = "muted";
+      li.textContent = "No habits yet — add one above.";
+      ul.appendChild(li);
+      return;
+    }
+    const hint = document.getElementById("habit-list-hint");
+    if (hint) {
+      if (habits.length === 0) {
+        hint.hidden = true;
+      } else {
+        hint.hidden = false;
+        hint.textContent =
+          habits.length > 1
+            ? "Each habit has its own calendar, marks, and progress — click a row to switch."
+            : "Add more habits anytime; each is stored separately (IndexedDB + local backup).";
+      }
+    }
+    for (const h of habits) {
+      const li = document.createElement("li");
+      li.dataset.id = h.id;
+      if (h.id === selectedId) li.classList.add("active");
+      const left = document.createElement("div");
+      left.style.cssText =
+        "display:flex;flex-direction:column;flex:1;min-width:0;gap:0.15rem;";
+      const titleEl = document.createElement("span");
+      titleEl.textContent = h.title || "(untitled)";
+      const meta = document.createElement("span");
+      meta.className = "muted";
+      meta.style.fontSize = "0.78rem";
+      const n = markedDates(h).length;
+      meta.textContent = `Start ${h.start} · ${n} day(s) logged`;
+      left.appendChild(titleEl);
+      left.appendChild(meta);
+      li.appendChild(left);
+      const pct = document.createElement("span");
+      pct.className = "muted";
+      pct.style.flexShrink = "0";
+      const d = deriveHabit(h);
+      pct.textContent = `${formatProgressPct(d.pct)}%`;
+      li.appendChild(pct);
+      li.addEventListener("click", () => {
+        selectedId = h.id;
+        save();
+        const t = new Date();
+        viewYear = t.getFullYear();
+        viewMonth = t.getMonth();
+        render();
+      });
+      ul.appendChild(li);
+    }
+  }
+
+  function renderDetail() {
+    const detail = document.getElementById("detail");
+    const h = habits.find((x) => x.id === selectedId);
+    if (!h) {
+      detail.hidden = true;
+      return;
+    }
+    detail.hidden = false;
+    document.getElementById("detail-title").textContent = h.title;
+    const detailStart = document.getElementById("detail-start-input");
+    detailStart.value = h.start;
+    detailStart.disabled = false;
+    detailStart.title =
+      "Phase 1 weeks are Sun–Sat; week 1 is the calendar week that contains this date. Your first log must be this date or later.";
+    const derived = deriveHabit(h);
+    document.getElementById("detail-status").textContent = derived.status;
+    document.getElementById("detail-pct").textContent = `Progress: ${formatProgressPct(derived.pct)}% · phase 1 pts ${derived.phase1Earned}/28 · phase 2 pts ${derived.phase2Earned}/4067`;
+
+    const upcoming = document.getElementById("detail-upcoming");
+    upcoming.hidden = false;
+    upcoming.replaceChildren();
+    const rowRest = document.createElement("div");
+    const sr = document.createElement("strong");
+    sr.textContent = "Next rest day";
+    rowRest.appendChild(sr);
+    rowRest.appendChild(document.createTextNode(` · ${derived.nextRestLabel}`));
+    upcoming.appendChild(rowRest);
+    const rowHabit = document.createElement("div");
+    const sh = document.createElement("strong");
+    sh.textContent = "Next day to log habit";
+    rowHabit.appendChild(sh);
+    rowHabit.appendChild(document.createTextNode(` · ${derived.nextHabitLabel}`));
+    upcoming.appendChild(rowHabit);
+
+    const fill = document.getElementById("progress-fill");
+    fill.style.width = `${derived.pct}%`;
+
+    const first = new Date(viewYear, viewMonth, 1);
+    const label = document.getElementById("cal-label");
+    label.textContent = first.toLocaleString(undefined, { month: "long", year: "numeric" });
+
+    const root = document.getElementById("cal-root");
+    root.innerHTML = "";
+    const dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    for (const x of dows) {
+      const e = document.createElement("div");
+      e.className = "dow";
+      e.textContent = x;
+      root.appendChild(e);
+    }
+
+    const startDow = first.getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const prevAnchor = new Date(viewYear, viewMonth, 0);
+    const prevYear = prevAnchor.getFullYear();
+    const prevMonth1 = prevAnchor.getMonth() + 1;
+    const prevMonthDays = prevAnchor.getDate();
+
+    function appendDayCell(iso, displayNum, adjacentMonth) {
+      const cell = document.createElement("div");
+      cell.className = adjacentMonth ? "cell other" : "cell";
+      cell.textContent = String(displayNum);
+      const done = !!h.days[iso];
+      if (done) cell.classList.add("done");
+      const beforeStart = daysDiff(h.start, iso) < 0;
+      if (beforeStart) cell.classList.add("before-start");
+      if (derived.restDays.has(iso) && !done) cell.classList.add("rest-block");
+      cell.addEventListener("click", () => {
+        if (beforeStart) return;
+        const turningOn = !h.days[iso];
+        const check = canToggleDay(h, iso, deriveHabit(h), turningOn);
+        if (!check.ok) return;
+        if (h.days[iso]) {
+          delete h.days[iso];
+        } else {
+          h.days[iso] = true;
+        }
+        save();
+        render();
+      });
+      root.appendChild(cell);
+    }
+
+    for (let i = 0; i < startDow; i++) {
+      const dayNum = prevMonthDays - startDow + i + 1;
+      const iso = ymd(prevYear, prevMonth1, dayNum);
+      appendDayCell(iso, dayNum, true);
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const iso = ymd(viewYear, viewMonth + 1, d);
+      appendDayCell(iso, d, false);
+    }
+
+    const totalCells = startDow + daysInMonth;
+    const trailing = (7 - (totalCells % 7)) % 7;
+    const nextFirst = new Date(viewYear, viewMonth + 1, 1);
+    const nextY = nextFirst.getFullYear();
+    const nextM = nextFirst.getMonth() + 1;
+    for (let i = 0; i < trailing; i++) {
+      const dayNum = i + 1;
+      const iso = ymd(nextY, nextM, dayNum);
+      appendDayCell(iso, dayNum, true);
+    }
+  }
+
+  function render() {
+    renderList();
+    renderDetail();
+  }
+
+  document.getElementById("add-habit").addEventListener("click", () => {
+    const inp = document.getElementById("title-input");
+    const title = inp.value.trim();
+    if (!title) return;
+    const startEl = document.getElementById("start-input");
+    const startVal = (startEl.value && startEl.value.trim()) || todayISO();
+    const h = { id: uuid(), title, start: startVal, days: {} };
+    habits.push(h);
+    selectedId = h.id;
+    inp.value = "";
+    const t = new Date();
+    viewYear = t.getFullYear();
+    viewMonth = t.getMonth();
+    save();
+    render();
+  });
+
+  document.getElementById("delete-habit").addEventListener("click", () => {
+    if (!selectedId) return;
+    habits = habits.filter((x) => x.id !== selectedId);
+    selectedId = habits[0]?.id ?? null;
+    save();
+    render();
+  });
+
+  document.getElementById("cal-prev").addEventListener("click", () => {
+    viewMonth--;
+    if (viewMonth < 0) {
+      viewMonth = 11;
+      viewYear--;
+    }
+    renderDetail();
+  });
+  document.getElementById("cal-next").addEventListener("click", () => {
+    viewMonth++;
+    if (viewMonth > 11) {
+      viewMonth = 0;
+      viewYear++;
+    }
+    renderDetail();
+  });
+
+  document.getElementById("detail-start-input").addEventListener("change", () => {
+    const h = habits.find((x) => x.id === selectedId);
+    if (!h) return;
+    const v = document.getElementById("detail-start-input").value;
+    if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+    h.start = v;
+    stripMarksBeforeStart(h);
+    save();
+    render();
+  });
+
+  document.getElementById("title-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") document.getElementById("add-habit").click();
+  });
+
+  document.getElementById("export-backup").addEventListener("click", () => {
+    try {
+      exportBackupToDownload();
+      setStorageStatus(
+        true,
+        `Backup downloaded (${habits.length} habit(s)). Save it to backups/ in the repo if you want a disk copy.`,
+      );
+    } catch (e) {
+      console.error(e);
+      setStorageStatus(false, `Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
+  document.getElementById("import-backup-trigger").addEventListener("click", () => {
+    document.getElementById("import-backup-input").click();
+  });
+
+  document.getElementById("import-backup-input").addEventListener("change", async (e) => {
+    const input = e.target;
+    const file = input.files && input.files[0];
+    input.value = "";
+    if (!file) return;
+    if (
+      !window.confirm(
+        "Replace all habits in this browser with this backup? Current in-browser data will be overwritten (you can export it first).",
+      )
+    ) {
+      return;
+    }
+    try {
+      const text = await file.text();
+      const obj = parseBackupJson(text);
+      applyBackupObject(obj);
+      await persistState();
+      render();
+      setStorageStatus(
+        true,
+        `${habits.length} habit(s) · imported from “${file.name}”; saved to IndexedDB and localStorage.`,
+      );
+    } catch (err) {
+      console.error(err);
+      setStorageStatus(false, `Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  window.addEventListener("pagehide", flushBackupSync);
+  window.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushBackupSync();
+  });
+
+  (async function init() {
+    const startField = document.getElementById("start-input");
+    if (startField) startField.value = todayISO();
+    try {
+      await loadFromIndexedDb();
+      if (habits.length && !selectedId) selectedId = habits[0].id;
+      setStorageStatus(
+        true,
+        habits.length === 0
+          ? "No habits yet — changes save to IndexedDB + localStorage backup on every action."
+          : `${habits.length} habit(s) · auto-saved to IndexedDB and localStorage on each change.`,
+      );
+    } catch (e) {
+      console.error("habit-builder: load failed", e);
+      setStorageStatus(false, "Could not open local database. Check that IndexedDB is allowed for this page.");
+    }
+    render();
+  })();
+})();
+  </script>
+</body>
+</html>
