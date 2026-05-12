@@ -1,323 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Habit Builder</title>
-  <script>
-    // Paint the correct theme before first paint. Priority:
-    //   1. ?theme=… query param (parent passes it on initial src)
-    //   2. local-time auto (07–19 → light, else dark) for standalone use
-    // Persisted parent overrides arrive later via postMessage (see body script).
-    (function () {
-      try {
-        var theme = "light";
-        var url = new URL(window.location.href);
-        var qp = url.searchParams.get("theme");
-        if (qp === "light" || qp === "dark") {
-          theme = qp;
-        } else {
-          var h = new Date().getHours();
-          theme = h >= 7 && h < 19 ? "light" : "dark";
-        }
-        document.documentElement.dataset.theme = theme;
-      } catch (_) {
-        document.documentElement.dataset.theme = "light";
-      }
-    })();
-  </script>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f6f3ec;
-      --panel: #fdfaf3;
-      --soft: #efeae0;
-      --border: #e3dccc;
-      --border-soft: #ece6d8;
-      --text: #2c2a25;
-      --muted: #74695a;
-      --accent: #3163a3;
-      --accent-soft: #dde6f1;
-      --accent-strong: #244c80;
-      --on-accent: #ffffff;
-      --button-bg: #f1ede2;
-      --button-border: #d3ccbb;
-      --button-hover-bg: #e2dccc;
-      --button-text: #3a342a;
-      --danger-text: #9b3d1e;
-      --input-bg: #fffdf6;
-      --input-border: #ccc3ae;
-      --bar-track: #e3dccc;
-      --bar-fill: #4f8a4a;
-      --done-bg: #cfead9;
-      --done-bg-other: #b8dec5;
-      --done-text: #1e4628;
-      --done-border: #97c0a6;
-      --rest-outline: #c9a227;
-      --cell-bg: #fffdf6;
-      --cell-border: #d8d2c2;
-      --cell-other-bg: #ece6d8;
-      --cell-other-text: #74695a;
-      --cell-other-border: #d3ccbb;
-      --active-row-bg: #e8efe6;
-    }
-    :root[data-theme="dark"] {
-      color-scheme: dark;
-      --bg: #1a1d24;
-      --panel: #23272f;
-      --soft: #2c313b;
-      --border: #3a4150;
-      --border-soft: #2f3540;
-      --text: #dde2eb;
-      --muted: #94a0b3;
-      --accent: #e8b675;
-      --accent-soft: #3a2c19;
-      --accent-strong: #d49b51;
-      --on-accent: #1a1208;
-      --button-bg: #2c313b;
-      --button-border: #3a4150;
-      --button-hover-bg: #353c48;
-      --button-text: #c5cdda;
-      --danger-text: #f0a98a;
-      --input-bg: #1d2129;
-      --input-border: #3a4150;
-      --bar-track: #2c313b;
-      --bar-fill: #6fa75e;
-      --done-bg: #1f3a1f;
-      --done-bg-other: #1b2f1b;
-      --done-text: #a8d99c;
-      --done-border: #3e6f3e;
-      --rest-outline: #c79a5e;
-      --cell-bg: #23272f;
-      --cell-border: #3a4150;
-      --cell-other-bg: #1f242d;
-      --cell-other-text: #94a0b3;
-      --cell-other-border: #3a4150;
-      --active-row-bg: #2a3140;
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      max-width: 720px;
-      margin: 1rem auto;
-      padding: 0 1rem;
-      color: var(--text);
-      background: var(--bg);
-      line-height: 1.4;
-      transition: background-color 0.4s ease, color 0.4s ease;
-    }
-    h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
-    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
-    input[type="text"],
-    input[type="date"] {
-      flex: 1;
-      min-width: 12rem;
-      padding: 0.4rem 0.5rem;
-      background: var(--input-bg);
-      color: var(--text);
-      border: 1px solid var(--input-border);
-      border-radius: 6px;
-    }
-    input[type="text"]:focus,
-    input[type="date"]:focus {
-      outline: 2px solid var(--accent);
-      outline-offset: 1px;
-    }
-    button {
-      padding: 0.4rem 0.75rem;
-      cursor: pointer;
-      background: var(--button-bg);
-      border: 1px solid var(--button-border);
-      border-radius: 6px;
-      color: var(--button-text);
-    }
-    button:hover { background: var(--button-hover-bg); }
-    button.danger { color: var(--danger-text); }
-    .habits {
-      list-style: none;
-      padding: 0;
-      margin: 0 0 1rem;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--panel);
-    }
-    .habits li {
-      padding: 0.5rem 0.75rem;
-      border-bottom: 1px solid var(--border-soft);
-      cursor: pointer;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 0.5rem;
-      color: var(--text);
-    }
-    .habits li:last-child { border-bottom: none; }
-    .habits li.active { background: var(--active-row-bg); }
-    .muted { color: var(--muted); font-size: 0.85rem; }
-    .panel {
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 0.75rem 1rem;
-      margin-bottom: 1rem;
-      background: var(--panel);
-    }
-    .bar {
-      height: 10px;
-      background: var(--bar-track);
-      border-radius: 5px;
-      overflow: hidden;
-      margin: 0.35rem 0;
-    }
-    .bar .fill {
-      height: 100%;
-      background: var(--bar-fill);
-      border-radius: 5px;
-      width: 0%;
-      transition: width 0.2s ease;
-    }
-    .cal-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
-    .cal-grid {
-      display: grid;
-      grid-template-columns: repeat(7, 1fr);
-      gap: 2px;
-      font-size: 0.8rem;
-    }
-    .cal-grid .dow { text-align: center; font-weight: 600; padding: 0.25rem; color: var(--muted); }
-    .cal-grid .cell {
-      aspect-ratio: 1;
-      border: 1px solid var(--cell-border);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      background: var(--cell-bg);
-      color: var(--text);
-      border-radius: 4px;
-    }
-    .cal-grid .cell.other {
-      background: var(--cell-other-bg);
-      color: var(--cell-other-text);
-      border-style: dashed;
-      border-color: var(--cell-other-border);
-    }
-    .cal-grid .cell.other.done {
-      background: var(--done-bg-other);
-      color: var(--done-text);
-      font-weight: 600;
-      border-style: solid;
-      border-color: var(--done-border);
-      opacity: 1;
-    }
-    .cal-grid .cell.before-start { cursor: not-allowed; opacity: 0.45; }
-    .cal-grid .cell.other.before-start { opacity: 0.55; }
-    .cal-grid .cell.done {
-      background: var(--done-bg);
-      color: var(--done-text);
-      font-weight: 600;
-    }
-    .cal-grid .cell.rest-block { outline: 2px solid var(--rest-outline); cursor: not-allowed; }
-    .rules { font-size: 0.8rem; color: var(--muted); margin-top: 1rem; }
-    .upcoming {
-      margin: 0.5rem 0 0.75rem;
-      padding: 0.5rem 0;
-      border-top: 1px solid var(--border-soft);
-      font-size: 0.9rem;
-    }
-    .upcoming div { margin: 0.2rem 0; }
-    label.start-label {
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      font-size: 0.9rem;
-      color: var(--text);
-    }
-    .habit-list-hint {
-      margin: 0 0 0.5rem;
-      font-size: 0.85rem;
-    }
-    html.embed-shell,
-    html.embed-shell body {
-      height: 100%;
-      margin: 0;
-    }
-    html.embed-shell body {
-      max-width: none;
-      padding: 0.5rem 0.45rem;
-      overflow-x: hidden;
-    }
-    html.embed-shell h1 { font-size: 1.05rem; margin: 0 0 0.5rem; }
-    html.embed-shell .rules { display: none; }
-  </style>
-</head>
-<body>
-  <script>
-    if (/\bembed=1\b/.test(location.search)) {
-      document.documentElement.classList.add("embed-shell");
-    }
-  </script>
-  <h1>Habit Builder</h1>
-  <p id="storage-status" class="muted" style="margin: 0 0 0.75rem">Loading saved data…</p>
-
-  <div class="row" style="margin-bottom: 0.75rem">
-    <button type="button" id="export-backup">Export backup (JSON)</button>
-    <button type="button" id="import-backup-trigger">Import backup…</button>
-    <input type="file" id="import-backup-input" accept="application/json,.json" hidden />
-  </div>
-
-  <div class="row">
-    <input type="text" id="title-input" placeholder="Habit title" maxlength="120" />
-    <label class="start-label"
-      >Start
-      <input type="date" id="start-input" aria-label="Program start date (day 0 of week 1)" /></label
-    >
-    <button type="button" id="add-habit">Add</button>
-  </div>
-
-  <p id="habit-list-hint" class="habit-list-hint muted" hidden></p>
-
-  <ul class="habits" id="habit-list" aria-label="Habits"></ul>
-
-  <div id="detail" class="panel" hidden>
-    <div class="row" style="justify-content: space-between">
-      <strong id="detail-title"></strong>
-      <button type="button" class="danger" id="delete-habit">Delete habit</button>
-    </div>
-    <div class="row">
-      <label class="start-label"
-        >Program start
-        <input type="date" id="detail-start-input" aria-label="Change program start date" /></label
-      >
-    </div>
-    <div id="detail-status" class="muted"></div>
-    <div class="bar" title="Progress"><div class="fill" id="progress-fill"></div></div>
-    <div id="detail-pct"></div>
-    <div id="detail-upcoming" class="upcoming" hidden></div>
-
-    <div class="cal-nav">
-      <button type="button" id="cal-prev" aria-label="Previous month">←</button>
-      <strong id="cal-label"></strong>
-      <button type="button" id="cal-next" aria-label="Next month">→</button>
-    </div>
-    <div class="cal-grid" id="cal-root"></div>
-  </div>
-
-  <p class="rules">
-    Phase 1 uses seven <strong>Sunday–Saturday</strong> calendar weeks. Week 1 is the week that contains your program
-    start; week <em>k</em> needs <em>k</em> logged days anywhere that week (only on/after your start date counts). After
-    phase 1, streaks of 8…90 days with one rest day
-    after each streak except after the final 90-day streak. Missing a habit day resets the current streak only (finished
-    streaks stay counted). Highlighted empty days are required rest — leave them unchecked. 100% = 4095 points.
-    Your habits are written to the browser’s <strong>IndexedDB</strong> database
-    (<code>scheduler-habit-builder-db</code>) after <strong>every</strong> change (toggle day, start date, add/delete habit,
-    switch selection). The same snapshot is mirrored to <strong>localStorage</strong> for recovery if IndexedDB fails.
-    Data stay on this device only — clearing site data removes them. There is no cloud backup.
-    Use <strong>Export backup</strong> to download JSON (save it under <code>scheduler/backups/</code> in the repo if you
-    like). Use <strong>Import backup</strong> to restore from that file; the browser cannot write into the repo by itself.
-    You can toggle any day on or after <strong>program start</strong> (including future calendar days). You can
-    track <strong>multiple habits</strong> — each has its own start date, calendar, and progress bar.
-  </p>
-
-  <script>
 (function () {
   // Listen for theme messages from the parent shell (postMessage from
   // day_scheduler.html). Same-origin only.
@@ -338,6 +18,7 @@
   const DB_VERSION = 1;
   const STORE_NAME = "state";
   const TOTAL_POINTS = 4095; // 28 + sum(8..90)
+  const PHASE2_MAX_POINTS = 4067; // sum(8..90)
 
   /** Show enough fractional digits that +1 point (~100/4095 %) is visible. */
   function formatProgressPct(pct) {
@@ -431,7 +112,6 @@
     if (!el) return;
     el.textContent = msg;
     el.classList.toggle("muted", ok);
-    el.style.color = ok ? "" : "var(--danger-text)";
   }
 
   /** @type {{ id: string, title: string, start: string, days: Record<string, boolean> }[]} */
@@ -450,8 +130,14 @@
       if (h) list.push(h);
     }
     habits = list;
-    let sid = typeof row.selectedId === "string" ? row.selectedId : null;
-    if (!habits.some((x) => x.id === sid)) sid = habits[0]?.id ?? null;
+    /** @type {string | null} */
+    let sid;
+    if (row != null && Object.prototype.hasOwnProperty.call(row, "selectedId")) {
+      sid = row.selectedId === null ? null : typeof row.selectedId === "string" ? row.selectedId : null;
+    } else {
+      sid = habits[0]?.id ?? null;
+    }
+    if (sid !== null && !habits.some((x) => x.id === sid)) sid = habits[0]?.id ?? null;
     selectedId = sid;
   }
 
@@ -540,49 +226,6 @@
       try {
         mirrorLocalStorageBackup();
       } catch (_) {}
-    });
-  }
-
-  const BACKUP_EXPORT_VERSION = 1;
-
-  function backupFilenameTimestamp() {
-    const d = new Date();
-    const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-  }
-
-  function exportBackupToDownload() {
-    const base = buildStatePayload();
-    const payload = {
-      ...base,
-      exportVersion: BACKUP_EXPORT_VERSION,
-      exportedAt: new Date().toISOString(),
-    };
-    const text = JSON.stringify(payload, null, 2);
-    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `habit-builder-backup-${backupFilenameTimestamp()}.json`;
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  function parseBackupJson(text) {
-    const obj = JSON.parse(text);
-    if (!obj || typeof obj !== "object") throw new Error("Not a JSON object");
-    if (!Array.isArray(obj.habits)) throw new Error("Missing habits array");
-    return obj;
-  }
-
-  function applyBackupObject(obj) {
-    ingestStorageRow({
-      id: typeof obj.id === "string" ? obj.id : "default",
-      habits: obj.habits,
-      selectedId: typeof obj.selectedId === "string" ? obj.selectedId : null,
     });
   }
 
@@ -838,6 +481,91 @@
     return { phase2Earned, complete, targetL, run, needRest, violation };
   }
 
+  /** Sorted ISO dates on/after first Phase 2 day (boundary + 1) that are marked. */
+  function phase2MarkedDatesAsc(boundaryISO, marksSet) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const firstP2 = addDaysISO(boundaryISO, 1);
+    const out = [];
+    for (const iso of mark) {
+      if (daysDiff(firstP2, iso) >= 0) out.push(iso);
+    }
+    out.sort();
+    return out;
+  }
+
+  /**
+   * Maximal contiguous runs of calendar days; each run is { start, end, length }.
+   * @param {string[]} sortedAsc
+   */
+  function contiguousRunsFromSorted(sortedAsc) {
+    if (!sortedAsc.length) return [];
+    const runs = [];
+    let runStart = sortedAsc[0];
+    let prev = sortedAsc[0];
+    let len = 1;
+    for (let i = 1; i < sortedAsc.length; i++) {
+      const iso = sortedAsc[i];
+      if (daysDiff(prev, iso) === 1) {
+        len += 1;
+      } else {
+        runs.push({ start: runStart, end: prev, length: len });
+        runStart = iso;
+        len = 1;
+      }
+      prev = iso;
+    }
+    runs.push({ start: runStart, end: prev, length: len });
+    return runs;
+  }
+
+  /** Longest run length among Phase 2 marks (for 90-day shortcut). */
+  function maxPhase2RunLength(boundaryISO, marksSet) {
+    const asc = phase2MarkedDatesAsc(boundaryISO, marksSet);
+    const runs = contiguousRunsFromSorted(asc);
+    let m = 0;
+    for (const r of runs) if (r.length > m) m = r.length;
+    return m;
+  }
+
+  /** Last maximal contiguous run length (greedy milestone packing). */
+  function terminalPhase2RunLength(boundaryISO, marksSet) {
+    const asc = phase2MarkedDatesAsc(boundaryISO, marksSet);
+    const runs = contiguousRunsFromSorted(asc);
+    return runs.length ? runs[runs.length - 1].length : 0;
+  }
+
+  /**
+   * Greedy Phase 2 points from terminal run only + shortcut.
+   * @returns {{ forgivingPhase2Pts: number, forgivingComplete: boolean }}
+   */
+  function simulatePhase2Forgiving(boundaryISO, marksSet) {
+    const maxLen = maxPhase2RunLength(boundaryISO, marksSet);
+    if (maxLen >= 90) {
+      return { forgivingPhase2Pts: PHASE2_MAX_POINTS, forgivingComplete: true };
+    }
+    const R = terminalPhase2RunLength(boundaryISO, marksSet);
+    if (R <= 0) {
+      return { forgivingPhase2Pts: 0, forgivingComplete: false };
+    }
+    let pos = 0;
+    let m = 8;
+    let earned = 0;
+    while (m <= 90) {
+      const rem = R - pos;
+      if (rem >= m) {
+        pos += m;
+        earned += m;
+        m += 1;
+      } else {
+        earned += rem;
+        break;
+      }
+    }
+    const forgivingComplete = earned >= PHASE2_MAX_POINTS;
+    const capped = Math.min(PHASE2_MAX_POINTS, earned);
+    return { forgivingPhase2Pts: capped, forgivingComplete };
+  }
+
   /**
    * Re-run simulation tracking rest-window for UI.
    */
@@ -936,24 +664,41 @@
     });
   }
 
-  /** @returns {{ iso: string, backlog: boolean } | null} */
+  /**
+   * Latest day this habit must be logged to keep the phase-1 weekly quota.
+   *
+   * Walks the earliest unsatisfied week (skipping weeks whose calendar window
+   * has already passed) and returns the latest eligible un-logged day where
+   * starting still leaves exactly enough days to meet that week's quota. If
+   * not enough eligible days remain in the current/upcoming week, returns
+   * todayISO with backlog=true (must log immediately to even attempt the
+   * remaining weeks).
+   *
+   * @returns {{ iso: string, backlog: boolean } | null}
+   */
   function nextHabitDayPhase1(h, actual, startISO, todayISO) {
+    const cursor = todayISO > startISO ? todayISO : startISO;
     for (let w = 0; w < 7; w++) {
       const need = w + 1;
-      if (actual[w] >= need) continue;
+      const done = actual[w];
+      if (done >= need) continue;
       const { weekStart, weekEnd } = phase1WeekRange(startISO, w);
-      let d = weekStart;
-      while (daysDiff(d, weekEnd) <= 0) {
-        if (daysDiff(h.start, d) < 0) {
-          d = addDaysISO(d, 1);
-          continue;
-        }
-        if (!h.days[d]) {
-          const backlog = daysDiff(todayISO, d) < 0;
-          return { iso: d, backlog };
-        }
+      if (cursor > weekEnd) continue;
+      let eligibleStart = weekStart;
+      if (cursor > eligibleStart) eligibleStart = cursor;
+      if (startISO > eligibleStart) eligibleStart = startISO;
+      if (eligibleStart > weekEnd) continue;
+      const avail = [];
+      let d = eligibleStart;
+      while (d <= weekEnd) {
+        if (!h.days[d]) avail.push(d);
         d = addDaysISO(d, 1);
       }
+      const remaining = need - done;
+      if (avail.length < remaining) {
+        return { iso: cursor, backlog: true };
+      }
+      return { iso: avail[avail.length - remaining], backlog: false };
     }
     return null;
   }
@@ -996,21 +741,35 @@
     const boundary = phase1Satisfied ? phase2BoundaryDate(h.start, marks) : null;
     const maxISO = maxDerivedScanISO(h);
     let phase2Earned = 0;
-    let pct = (100 * phase1Earned) / TOTAL_POINTS;
-    let complete = false;
+    let strictPct = (100 * phase1Earned) / TOTAL_POINTS;
+    let forgivingPct = (100 * phase1Earned) / TOTAL_POINTS;
+    let strictComplete = false;
+    let forgivingPhase2Pts = 0;
+    let forgivingComplete = false;
     let sim = null;
     let restDays = new Set();
 
     if (boundary !== null) {
       sim = simulatePhase2(boundary, marksSet, maxISO);
       phase2Earned = sim.phase2Earned;
-      complete = sim.complete;
+      strictComplete = sim.complete;
       if (!sim.violation) {
-        pct = (100 * (phase1Earned + phase2Earned)) / TOTAL_POINTS;
-        if (complete) pct = 100;
+        strictPct = (100 * (phase1Earned + phase2Earned)) / TOTAL_POINTS;
+        if (strictComplete) strictPct = 100;
+      } else {
+        strictPct = (100 * (phase1Earned + phase2Earned)) / TOTAL_POINTS;
       }
+
+      const f = simulatePhase2Forgiving(boundary, marksSet);
+      forgivingPhase2Pts = f.forgivingPhase2Pts;
+      forgivingComplete = f.forgivingComplete;
+      forgivingPct = (100 * (phase1Earned + forgivingPhase2Pts)) / TOTAL_POINTS;
+      if (forgivingComplete) forgivingPct = 100;
+
       restDays = deriveRestDaySet(boundary, marksSet);
     }
+
+    const programDone = Boolean(strictComplete || forgivingComplete);
 
     const today = todayISO();
     let status = "";
@@ -1035,19 +794,26 @@
         if (actual[i] < n) incompleteEarlier.push(`${i + 1} (${actual[i]}/${n})`);
       }
       const backlog =
-        incompleteEarlier.length > 0
-          ? ` · earlier weeks still short: ${incompleteEarlier.join(", ")}`
-          : "";
-      status = `Phase 1 · week ${w + 1}/7 (Sun–Sat; week 1 contains program start) · this week: ${actual[w]}/${need} toward goal${backlog}. Pick any day Sun–Sat on/after start; week k needs k marks.`;
+        incompleteEarlier.length > 0 ? ` · catch up earlier: ${incompleteEarlier.join("; ")}` : "";
+      status = `Week ${w + 1} of 7 · ${actual[w]}/${need} days logged this calendar week${backlog}.`;
     } else if (boundary === null) {
       status = "Phase 1 complete (boundary error)";
+    } else if (programDone) {
+      if (forgivingComplete && !strictComplete) {
+        status =
+          "Complete — Progress track (e.g. 90-day streak or milestones). Long-run ladder may stay below 100%.";
+      } else if (strictComplete) {
+        status = "Complete — Long-run Phase 2 ladder finished.";
+      } else {
+        status = "Complete.";
+      }
     } else if (sim && sim.violation) {
-      status = "Phase 2: fix rest days — you logged on a required rest day. Remove that mark.";
-    } else if (complete) {
-      status = "Complete — 90-day streak done.";
+      status =
+        "Phase 2 (Long run): you logged on a required rest day. Fix rests to advance the Long-run bar; Progress bar still reflects your latest streak.";
     } else if (sim) {
       const r = sim.needRest ? "log a rest day (leave today unchecked)" : `streak ${sim.run}/${sim.targetL}`;
-      status = `Phase 2 · target streak length ${sim.targetL} · ${r}`;
+      status =
+        `Long run: streak target ${sim.targetL}; ${r}. Progress bar uses your latest contiguous streak.`;
     }
 
     let nextRestLabel = "—";
@@ -1061,22 +827,22 @@
       nextRestLabel = "— (phase 1 has no rest days)";
       if (nh) {
         nextHabitLabel = nh.backlog
-          ? `${formatScheduleDay(nh.iso)} — catch up (earlier week still short)`
+          ? `${formatScheduleDay(nh.iso)} — log today; remaining days are short of this week's quota`
           : formatScheduleDay(nh.iso);
       }
     } else if (boundary === null) {
       nextRestLabel = "—";
       nextHabitLabel = "—";
-    } else if (sim && sim.violation) {
-      nextRestLabel = "—";
-      nextHabitLabel = "— (fix rest violation first)";
-    } else if (complete) {
+    } else if (programDone) {
       nextRestLabel = "None (finished)";
       nextHabitLabel = "None (finished)";
+    } else if (sim && sim.violation) {
+      nextRestLabel = "—";
+      nextHabitLabel = "— (fix strict rest violation to use strict next-day hints)";
     } else {
       const nr = nextRestFromSet(restDays, today);
       nextRestLabel = nr ? `${formatScheduleDay(nr)} (leave unchecked)` : "—";
-      const nh = nextHabitDayPhase2(boundary, marksSet, today, complete);
+      const nh = nextHabitDayPhase2(boundary, marksSet, today, programDone);
       if (nh) {
         nextHabitLabel =
           daysDiff(today, nh) === 0 ? `${formatScheduleDay(nh)} (today)` : formatScheduleDay(nh);
@@ -1085,12 +851,20 @@
       }
     }
 
+    const pct = Math.min(100, Math.max(0, forgivingPct));
+
     return {
       phase1Earned,
       phase2Earned,
-      pct: Math.min(100, Math.max(0, pct)),
+      forgivingPhase2Pts,
+      pct,
+      strictPct: Math.min(100, Math.max(0, strictPct)),
+      forgivingPct: Math.min(100, Math.max(0, forgivingPct)),
+      strictComplete,
+      forgivingComplete,
+      programDone,
       status,
-      complete,
+      complete: programDone,
       boundary,
       phase1Satisfied,
       restDays,
@@ -1111,6 +885,8 @@
 
   function renderList() {
     const ul = document.getElementById("habit-list");
+    const count = document.getElementById("habit-list-count");
+    if (count) count.textContent = `${habits.length} habit${habits.length === 1 ? "" : "s"}`;
     ul.innerHTML = "";
     if (habits.length === 0) {
       const hintEmpty = document.getElementById("habit-list-hint");
@@ -1129,40 +905,72 @@
         hint.hidden = false;
         hint.textContent =
           habits.length > 1
-            ? "Each habit has its own calendar, marks, and progress — click a row to switch."
+            ? "Click a habit to open details · click again to collapse."
             : "Add more habits anytime; each is stored separately (IndexedDB + local backup).";
       }
     }
     for (const h of habits) {
       const li = document.createElement("li");
       li.dataset.id = h.id;
+      li.setAttribute("role", "button");
+      li.setAttribute("tabindex", "0");
+      li.setAttribute("aria-pressed", h.id === selectedId ? "true" : "false");
       if (h.id === selectedId) li.classList.add("active");
       const left = document.createElement("div");
-      left.style.cssText =
-        "display:flex;flex-direction:column;flex:1;min-width:0;gap:0.15rem;";
+      left.className = "habit-li-main";
       const titleEl = document.createElement("span");
+      titleEl.className = "habit-title";
       titleEl.textContent = h.title || "(untitled)";
       const meta = document.createElement("span");
-      meta.className = "muted";
-      meta.style.fontSize = "0.78rem";
+      meta.className = "muted habit-li-meta";
       const n = markedDates(h).length;
       meta.textContent = `Start ${h.start} · ${n} day(s) logged`;
       left.appendChild(titleEl);
       left.appendChild(meta);
       li.appendChild(left);
-      const pct = document.createElement("span");
-      pct.className = "muted";
-      pct.style.flexShrink = "0";
       const d = deriveHabit(h);
-      pct.textContent = `${formatProgressPct(d.pct)}%`;
-      li.appendChild(pct);
-      li.addEventListener("click", () => {
-        selectedId = h.id;
+      const progress = document.createElement("div");
+      progress.className = "habit-progress";
+      const stack = document.createElement("div");
+      stack.className = "habit-progress-rows";
+      function habitMiniRow(fillClassName, pctVal) {
+        const wrap = document.createElement("div");
+        wrap.className = "habit-progress-row-wrap";
+        const row = document.createElement("div");
+        row.className = "mini-bar " + fillClassName;
+        const fill = document.createElement("span");
+        fill.style.width = `${pctVal}%`;
+        row.appendChild(fill);
+        const sp = document.createElement("span");
+        sp.className = "muted habit-progress-pct";
+        sp.textContent = `${formatProgressPct(pctVal)}%`;
+        wrap.appendChild(row);
+        wrap.appendChild(sp);
+        return wrap;
+      }
+      stack.appendChild(habitMiniRow("forgiving", d.forgivingPct));
+      stack.appendChild(habitMiniRow("strict-mini", d.strictPct));
+      progress.title = "Progress track (accent) vs Long-run track (green)";
+      progress.appendChild(stack);
+      li.appendChild(progress);
+      const selectHabit = () => {
+        if (selectedId === h.id) {
+          selectedId = null;
+        } else {
+          selectedId = h.id;
+          const t = new Date();
+          viewYear = t.getFullYear();
+          viewMonth = t.getMonth();
+        }
         save();
-        const t = new Date();
-        viewYear = t.getFullYear();
-        viewMonth = t.getMonth();
         render();
+      };
+      li.addEventListener("click", selectHabit);
+      li.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          selectHabit();
+        }
       });
       ul.appendChild(li);
     }
@@ -1184,7 +992,30 @@
       "Phase 1 weeks are Sun–Sat; week 1 is the calendar week that contains this date. Your first log must be this date or later.";
     const derived = deriveHabit(h);
     document.getElementById("detail-status").textContent = derived.status;
-    document.getElementById("detail-pct").textContent = `Progress: ${formatProgressPct(derived.pct)}% · phase 1 pts ${derived.phase1Earned}/28 · phase 2 pts ${derived.phase2Earned}/4067`;
+
+    document.getElementById("progress-pct-forgiving").textContent =
+      `${formatProgressPct(derived.forgivingPct)}%`;
+    document.getElementById("progress-pct-strict").textContent =
+      `${formatProgressPct(derived.strictPct)}%`;
+
+    const pointsRoot = document.getElementById("detail-points");
+    pointsRoot.replaceChildren();
+    function addPtsRow(label, value) {
+      const row = document.createElement("div");
+      row.className = "points-summary-row";
+      const l = document.createElement("span");
+      l.className = "points-label";
+      l.textContent = label;
+      const v = document.createElement("span");
+      v.className = "points-value";
+      v.textContent = value;
+      row.appendChild(l);
+      row.appendChild(v);
+      pointsRoot.appendChild(row);
+    }
+    addPtsRow("Phase 1", `${derived.phase1Earned} / 28 pts`);
+    addPtsRow("Phase 2 · Progress track", `${derived.forgivingPhase2Pts} / ${PHASE2_MAX_POINTS} pts`);
+    addPtsRow("Phase 2 · Long-run track", `${derived.phase2Earned} / ${PHASE2_MAX_POINTS} pts`);
 
     const upcoming = document.getElementById("detail-upcoming");
     upcoming.hidden = false;
@@ -1197,13 +1028,15 @@
     upcoming.appendChild(rowRest);
     const rowHabit = document.createElement("div");
     const sh = document.createElement("strong");
-    sh.textContent = "Next day to log habit";
+    sh.textContent = "Next day to log habit (latest deadline)";
     rowHabit.appendChild(sh);
     rowHabit.appendChild(document.createTextNode(` · ${derived.nextHabitLabel}`));
     upcoming.appendChild(rowHabit);
 
-    const fill = document.getElementById("progress-fill");
-    fill.style.width = `${derived.pct}%`;
+    const fillS = document.getElementById("progress-fill-strict");
+    const fillF = document.getElementById("progress-fill-forgiving");
+    fillS.style.width = `${derived.strictPct}%`;
+    fillF.style.width = `${derived.forgivingPct}%`;
 
     const first = new Date(viewYear, viewMonth, 1);
     const label = document.getElementById("cal-label");
@@ -1336,51 +1169,6 @@
     if (e.key === "Enter") document.getElementById("add-habit").click();
   });
 
-  document.getElementById("export-backup").addEventListener("click", () => {
-    try {
-      exportBackupToDownload();
-      setStorageStatus(
-        true,
-        `Backup downloaded (${habits.length} habit(s)). Save it to backups/ in the repo if you want a disk copy.`,
-      );
-    } catch (e) {
-      console.error(e);
-      setStorageStatus(false, `Export failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  });
-
-  document.getElementById("import-backup-trigger").addEventListener("click", () => {
-    document.getElementById("import-backup-input").click();
-  });
-
-  document.getElementById("import-backup-input").addEventListener("change", async (e) => {
-    const input = e.target;
-    const file = input.files && input.files[0];
-    input.value = "";
-    if (!file) return;
-    if (
-      !window.confirm(
-        "Replace all habits in this browser with this backup? Current in-browser data will be overwritten (you can export it first).",
-      )
-    ) {
-      return;
-    }
-    try {
-      const text = await file.text();
-      const obj = parseBackupJson(text);
-      applyBackupObject(obj);
-      await persistState();
-      render();
-      setStorageStatus(
-        true,
-        `${habits.length} habit(s) · imported from “${file.name}”; saved to IndexedDB and localStorage.`,
-      );
-    } catch (err) {
-      console.error(err);
-      setStorageStatus(false, `Import failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  });
-
   window.addEventListener("pagehide", flushBackupSync);
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushBackupSync();
@@ -1391,7 +1179,6 @@
     if (startField) startField.value = todayISO();
     try {
       await loadInitialState();
-      if (habits.length && !selectedId) selectedId = habits[0].id;
       setStorageStatus(
         true,
         habits.length === 0
@@ -1405,6 +1192,3 @@
     render();
   })();
 })();
-  </script>
-</body>
-</html>

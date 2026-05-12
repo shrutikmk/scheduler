@@ -1,0 +1,2556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Heartbeat — Finances</title>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("scheduler-theme-mode") || "auto";
+        var theme;
+        if (saved === "light" || saved === "dark") {
+          theme = saved;
+        } else {
+          var h = new Date().getHours();
+          theme = h >= 7 && h < 19 ? "light" : "dark";
+        }
+        document.documentElement.dataset.theme = theme;
+      } catch (_) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="heartbeat_theme.css" />
+  <link rel="stylesheet" href="heartbeat_shell.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <style>
+    html { height: 100%; }
+    body { min-height: 100%; }
+    .fin-app-main { color: var(--text); }
+    .fin-app-main .muted { color: var(--muted); }
+    .fin-page-hero { margin: 0 0 1rem; }
+    .fin-page-title {
+      display: flex;
+      flex-direction: column;
+      gap: 0.18rem;
+    }
+    .fin-page-title strong {
+      font-size: 0.98rem;
+      letter-spacing: -0.015em;
+      line-height: 1.15;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .fin-page-kicker {
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 500;
+      line-height: 1.2;
+    }
+    .fin-controls-strip {
+      margin: 0 0 1rem;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--panel-translucent);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow-soft);
+    }
+    .fin-controls-inner {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      gap: 0.85rem 1.25rem;
+    }
+    .fin-view-modes {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.65rem 1rem;
+      flex: 0 0 auto;
+    }
+    .fin-date-range {
+      display: flex;
+      flex-wrap: nowrap;
+      align-items: flex-end;
+      gap: 0.85rem 1.1rem;
+      min-width: 0;
+      flex: 1 1 320px;
+    }
+    .fin-date-field {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      gap: 0.45rem;
+      min-width: 0;
+    }
+    .fin-date-field .date-nav.fin-date-nav {
+      width: min(12.75rem, 42vw);
+      max-width: 100%;
+      flex: 1 1 auto;
+    }
+    @media (max-width: 720px) {
+      .fin-date-range {
+        flex-wrap: wrap;
+      }
+      .fin-date-field .date-nav.fin-date-nav {
+        width: min(14rem, 100%);
+      }
+    }
+    .fin-date-range-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .muted { color: var(--muted); font-size: 0.875rem; }
+    .row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+    #drop {
+      flex: 1; min-width: 240px; min-height: 72px;
+      border: 2px dashed var(--border);
+      border-radius: 14px; display: flex; align-items: center; justify-content: center;
+      background: var(--panel); cursor: pointer; padding: 0.75rem; text-align: center;
+      color: var(--muted);
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    #drop.drag {
+      border-color: var(--fin-drop-drag-border);
+      background: var(--fin-drop-drag-bg);
+    }
+    button, .btn-like {
+      padding: 0.45rem 0.85rem; border-radius: 8px;
+      border: 1px solid var(--button-border);
+      background: var(--button-bg); color: var(--button-text);
+      cursor: pointer; font-size: 0.875rem;
+      font-weight: 600;
+      font-family: inherit;
+    }
+    button.primary {
+      background: var(--accent); color: var(--on-accent); border-color: var(--accent-strong);
+    }
+    button.primary:hover { filter: brightness(1.05); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .fin-files-wrap {
+      position: relative;
+      margin-bottom: 0.35rem;
+    }
+    .fin-files-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.42rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 0.84rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      max-width: min(100%, 28rem);
+      text-align: left;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .fin-files-toggle:hover {
+      border-color: var(--accent-soft);
+      background: var(--soft);
+    }
+    .fin-files-toggle[aria-expanded="true"] {
+      border-color: var(--accent-strong);
+      box-shadow: var(--shadow-soft);
+    }
+    .fin-files-toggle:focus-visible {
+      outline: 2px solid var(--input-focus-border);
+      outline-offset: 2px;
+    }
+    .fin-files-chevron {
+      margin-left: auto;
+      font-size: 0.65rem;
+      color: var(--muted);
+      transition: transform 0.2s ease;
+    }
+    .fin-files-toggle[aria-expanded="true"] .fin-files-chevron {
+      transform: rotate(-180deg);
+    }
+    .fin-files-panel {
+      position: absolute;
+      left: 0;
+      top: calc(100% + 4px);
+      min-width: min(100%, 22rem);
+      max-width: min(96vw, 26rem);
+      z-index: 50;
+      padding: 0.35rem;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .fin-files-panel[hidden] { display: none !important; }
+    .fin-files-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-height: min(50vh, 280px);
+      overflow-y: auto;
+    }
+    .fin-files-list li.fin-file-row {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.38rem 0.45rem;
+      margin: 0.1rem 0;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text);
+      font-size: 0.84rem;
+    }
+    .fin-files-list li.fin-file-row:hover {
+      background: var(--soft);
+    }
+    .fin-files-list li.fin-file-row.active {
+      border-color: var(--accent-strong);
+      background: var(--accent-soft);
+    }
+    .fin-file-pick {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .fin-file-remove {
+      flex-shrink: 0;
+      width: 1.5rem;
+      height: 1.5rem;
+      padding: 0;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 1.1rem;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: inherit;
+      font-weight: 700;
+    }
+    .fin-file-remove:hover {
+      background: rgba(220, 38, 38, 0.12);
+      color: #dc2626;
+    }
+    :root[data-theme="dark"] .fin-file-remove:hover {
+      background: rgba(248, 113, 113, 0.12);
+      color: #fca5a5;
+    }
+    .fin-files-empty {
+      padding: 0.5rem 0.45rem;
+      margin: 0;
+      font-size: 0.82rem;
+    }
+    .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; }
+    @media (min-width: 1080px) {
+      .charts { grid-template-columns: repeat(3, 1fr); }
+    }
+    .kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
+      gap: 0.75rem;
+      margin: 0 0 1.25rem;
+    }
+    .kpi-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.65rem 0.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+    .kpi-label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 500;
+    }
+    .kpi-value {
+      font-size: 1.05rem;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.25;
+      word-break: break-word;
+      color: var(--text);
+    }
+    .kpi-pos { color: #15803d; }
+    .kpi-neg { color: #dc2626; }
+    .kpi-muted { color: var(--muted); font-weight: 550; font-size: 0.88rem; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px; padding: 0.75rem;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .card h2 {
+      font-size: 0.8rem;
+      margin: 0 0 0.5rem;
+      font-weight: 600;
+      flex-shrink: 0;
+      color: var(--text);
+      opacity: 0.78;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    /* Chart.js needs a definite height when maintainAspectRatio is false, or the canvas can grow without bound. */
+    .chart-wrap {
+      position: relative;
+      height: 300px;
+      width: 100%;
+      flex-shrink: 0;
+    }
+    #insightBox.insight-prose {
+      white-space: normal;
+      font-size: 0.9375rem;
+      line-height: 1.58;
+      color: var(--text);
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 1.2rem 1.35rem;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-soft);
+      min-height: 120px;
+    }
+    #insightBox.insight-prose.insight-muted {
+      color: var(--muted);
+      font-size: 0.875rem;
+      line-height: 1.5;
+    }
+    #insightBox.insight-prose.insight-error {
+      color: #dc2626;
+      font-size: 0.875rem;
+    }
+    #insightBox.insight-prose > *:first-child { margin-top: 0; }
+    #insightBox.insight-prose > *:last-child { margin-bottom: 0; }
+    #insightBox.insight-prose h1 {
+      font-size: 1.2rem;
+      font-weight: 650;
+      margin: 0 0 0.75rem;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      line-height: 1.35;
+    }
+    #insightBox.insight-prose h2 {
+      font-size: 1.05rem;
+      font-weight: 650;
+      margin: 1.2rem 0 0.55rem;
+      color: var(--text);
+    }
+    #insightBox.insight-prose h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 1rem 0 0.45rem;
+      color: var(--text);
+    }
+    #insightBox.insight-prose p { margin: 0 0 0.7rem; }
+    #insightBox.insight-prose ul, #insightBox.insight-prose ol {
+      margin: 0 0 0.85rem;
+      padding-left: 1.4rem;
+    }
+    #insightBox.insight-prose li { margin: 0.28rem 0; }
+    #insightBox.insight-prose li > p { margin: 0.25rem 0; }
+    #insightBox.insight-prose strong { font-weight: 600; color: var(--text); }
+    #insightBox.insight-prose em { font-style: italic; }
+    #insightBox.insight-prose a {
+      color: var(--accent);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    #insightBox.insight-prose code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.84em;
+      background: var(--soft);
+      padding: 0.12em 0.4em;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    #insightBox.insight-prose pre {
+      margin: 0.65rem 0;
+      padding: 0.75rem 1rem;
+      background: var(--soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+    #insightBox.insight-prose pre code {
+      background: none;
+      border: 0;
+      padding: 0;
+      font-size: inherit;
+    }
+    #insightBox.insight-prose blockquote {
+      margin: 0.75rem 0;
+      padding: 0.35rem 0 0.35rem 0.9rem;
+      border-left: 3px solid var(--border);
+      color: var(--muted);
+    }
+    #insightBox.insight-prose hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 1rem 0;
+    }
+    .fin-app-main p code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: var(--soft);
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .err { color: #dc2626; font-size: 0.875rem; margin-top: 0.35rem; }
+    input[type="file"] { display: none; }
+    .fin-view-modes label { cursor: pointer; font-size: 0.875rem; color: var(--text); }
+    .fin-view-modes input[type="radio"] { accent-color: var(--accent); }
+    #viewLabel { font-size: 0.8125rem; color: var(--muted); margin-bottom: 0.75rem; }
+    .card.chart-card {
+      cursor: pointer;
+      transition: box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .card.chart-card:hover {
+      box-shadow: var(--shadow-soft);
+      border-color: var(--accent-soft);
+    }
+    .card.chart-card:focus {
+      outline: 2px solid var(--input-focus-border);
+      outline-offset: 2px;
+    }
+    .chart-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      box-sizing: border-box;
+    }
+    .chart-modal[hidden] { display: none !important; }
+    .chart-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      cursor: pointer;
+    }
+    .chart-modal-panel {
+      position: relative;
+      z-index: 1;
+      background: var(--panel);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      max-width: min(1120px, 96vw);
+      width: 100%;
+      max-height: 92vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem 1.1rem;
+    }
+    .chart-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.35rem;
+    }
+    .chart-modal-header h2 { font-size: 1.1rem; font-weight: 600; margin: 0; color: var(--text); }
+    .chart-modal-hint { margin: 0 0 0.65rem; font-size: 0.8rem; color: var(--muted); }
+    .chart-modal-wrap {
+      position: relative;
+      flex: 1;
+      min-height: min(72vh, 680px);
+      height: min(72vh, 680px);
+      width: 100%;
+    }
+    .insights-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 1rem 1.25rem;
+      margin-top: 0.5rem;
+    }
+    .insights-toolbar-left {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.85rem 1rem;
+    }
+    .insights-toolbar-meta {
+      flex: 1;
+      min-width: 200px;
+      text-align: right;
+    }
+    .lux-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.65rem;
+      cursor: pointer;
+      user-select: none;
+      padding: 0.35rem 0.55rem 0.35rem 0.35rem;
+      margin: 0;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .lux-toggle:hover {
+      background: var(--soft);
+      border-color: var(--border);
+    }
+    .lux-toggle:has(input:focus-visible) {
+      outline: 2px solid var(--input-focus-border);
+      outline-offset: 2px;
+    }
+    .lux-toggle input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+    }
+    .lux-toggle-track {
+      position: relative;
+      width: 48px;
+      height: 28px;
+      border-radius: 999px;
+      flex-shrink: 0;
+      background: linear-gradient(145deg, var(--border), var(--border-soft));
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
+      transition: background 0.35s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.35s ease;
+    }
+    .lux-toggle-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: linear-gradient(180deg, var(--panel) 0%, var(--soft) 100%);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+      transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.35s ease;
+    }
+    .lux-toggle input:checked + .lux-toggle-track {
+      background: linear-gradient(135deg, #6d28d9 0%, #2563eb 52%, #059669 100%);
+      box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.25), 0 0 0 1px rgba(37, 99, 235, 0.18);
+    }
+    .lux-toggle input:checked + .lux-toggle-track .lux-toggle-thumb {
+      transform: translateX(20px);
+      box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.45);
+    }
+    .lux-toggle-text {
+      display: flex;
+      flex-direction: column;
+      gap: 0.08rem;
+      line-height: 1.25;
+    }
+    .lux-toggle-title {
+      font-size: 0.8125rem;
+      font-weight: 650;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+    .lux-toggle-hint {
+      font-size: 0.72rem;
+      color: var(--muted);
+      max-width: 240px;
+    }
+    .category-drill-panel {
+      max-width: min(640px, 96vw);
+    }
+    .category-drill-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      max-height: min(58vh, 520px);
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--soft);
+    }
+    .category-drill-list li {
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      display: flex;
+      justify-content: space-between;
+      gap: 0.85rem;
+      align-items: flex-start;
+      font-size: 0.875rem;
+    }
+    .category-drill-list li:last-child { border-bottom: none; }
+    .category-drill-list .drill-amt {
+      font-variant-numeric: tabular-nums;
+      font-weight: 650;
+      flex-shrink: 0;
+      color: #b91c1c;
+    }
+    .category-drill-list .drill-meta {
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-top: 0.25rem;
+    }
+    .category-drill-list .drill-bank-text {
+      font-weight: 500;
+      color: var(--text);
+      word-break: break-word;
+    }
+    .category-drill-list .drill-friendly-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #4c1d95;
+      margin-top: 0.35rem;
+    }
+    .llm-labels-banner {
+      margin: 0.35rem 0 0.5rem;
+      padding: 0.45rem 0.65rem;
+      border-radius: 8px;
+      background: rgba(234, 179, 8, 0.2);
+      border: 1px solid rgba(202, 138, 4, 0.45);
+      color: #854d0e;
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+    :root[data-theme="dark"] .llm-labels-banner {
+      background: rgba(234, 179, 8, 0.08);
+      border-color: rgba(250, 204, 21, 0.28);
+      color: #fde68a;
+    }
+    .retitle-progress-wrap {
+      margin: 0.35rem 0 0.65rem;
+      padding: 0.55rem 0.7rem;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      font-size: 0.84rem;
+      line-height: 1.4;
+      color: var(--text);
+    }
+    .retitle-progress-track {
+      margin-top: 0.4rem;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--soft);
+      overflow: hidden;
+    }
+    .retitle-progress-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #6366f1, #2563eb);
+      width: 0%;
+      transition: width 0.35s ease;
+    }
+    .ledger-llm-live-wrap {
+      margin: 0.35rem 0 0.65rem;
+      padding: 0.55rem 0.75rem;
+      border-radius: 8px;
+      background: var(--soft);
+      border: 1px solid var(--border);
+      font-size: 0.8125rem;
+      line-height: 1.45;
+      color: var(--text);
+    }
+    .ledger-llm-live-head {
+      font-weight: 650;
+      font-size: 0.84rem;
+      color: var(--text);
+      margin-bottom: 0.35rem;
+    }
+    .ledger-llm-live-meta {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+    .ledger-llm-live-bar-track {
+      height: 10px;
+      border-radius: 999px;
+      background: var(--border-soft);
+      overflow: hidden;
+      margin-bottom: 0.5rem;
+    }
+    .ledger-llm-live-bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      width: 0%;
+      background: linear-gradient(90deg, #7c3aed, #4f46e5, #2563eb);
+      transition: width 0.35s ease;
+    }
+    .ledger-llm-live-bar-track.indeterminate .ledger-llm-live-bar-fill {
+      width: 35%;
+      animation: ledgerLlmIndet 1.1s ease-in-out infinite;
+    }
+    @keyframes ledgerLlmIndet {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
+    }
+    .ledger-llm-live-step {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #5b21b6;
+      margin-bottom: 0.2rem;
+    }
+    .ledger-llm-live-detail {
+      color: var(--text);
+      margin-bottom: 0.45rem;
+    }
+    .ledger-llm-live-log {
+      margin: 0;
+      padding: 0.4rem 0.5rem;
+      list-style: none;
+      max-height: 7.5rem;
+      overflow-y: auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .ledger-llm-live-log li { margin: 0.2rem 0; white-space: pre-wrap; word-break: break-word; }
+    .ledger-llm-live-wrap.ledger-llm-error {
+      border-color: rgba(220, 38, 38, 0.55);
+      background: rgba(220, 38, 38, 0.08);
+    }
+  </style>
+</head>
+<body>
+  <div class="fin-app-frame">
+  <header class="site-nav" role="banner">
+    <a class="site-nav-brand" href="/" title="Heartbeat home">
+      <span class="site-nav-heart" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path fill="currentColor" d="M12 20.35l-1.45-1.32C5.4 14.36 2 11.28 2 7.5 2 5.5 3.5 4 5.5 4c1.54 0 3.04.99 3.57 2.36h1.87C11.96 4.99 13.46 4 15 4c2 0 3.5 1.5 3.5 3.5 0 2.78-3.4 5.86-8.55 11.54L12 20.35z"/>
+        </svg>
+      </span>
+      <span class="site-nav-title">Heartbeat</span>
+    </a>
+    <div class="site-nav-right">
+      <nav class="site-nav-links" aria-label="Sections">
+        <a href="/" class="site-nav-tab">Scheduler</a>
+        <a href="/finances" class="site-nav-tab" aria-current="page">Finances</a>
+      </nav>
+      <div
+        class="theme-toggle"
+        role="group"
+        aria-label="Theme"
+        id="fin-theme-toggle"
+        title="Auto follows local time (light by day, dark at night)"
+      >
+        <button type="button" data-theme-mode="auto">Auto</button>
+        <button type="button" data-theme-mode="light" aria-label="Light theme">☀</button>
+        <button type="button" data-theme-mode="dark" aria-label="Dark theme">☾</button>
+      </div>
+    </div>
+  </header>
+  <div class="fin-app-main">
+  <div class="fin-page-hero">
+    <div class="fin-page-title">
+      <strong>Financial analytics</strong>
+      <span class="fin-page-kicker">Ledger, charts, and LLM insights</span>
+    </div>
+  </div>
+  <p class="muted">Drop weekly bank CSVs; the server keeps a <strong>deduplicated ledger</strong> under <code>financial-data/ledger.sqlite</code> for aggregate views.</p>
+
+  <div class="row">
+    <div id="drop">Drop CSV here</div>
+    <label>
+      <span class="btn-like">Browse…</span>
+      <input id="pick" type="file" accept=".csv,text/csv" />
+    </label>
+    <button type="button" class="primary" id="btnReload" title="Refresh file list">Refresh list</button>
+    <button type="button" id="btnLedgerMeta" title="Reload ledger date range">Refresh meta</button>
+    <button type="button" id="btnReindex" title="Rebuild ledger from all CSVs">Reindex ledger</button>
+  </div>
+  <div class="muted" style="margin-bottom:0.25rem;">CSV files on server</div>
+  <div class="fin-files-wrap" id="finFilesWrap">
+    <button type="button" id="finFilesToggle" class="fin-files-toggle" aria-expanded="false" aria-haspopup="listbox" aria-controls="finFilesPanel">
+      <span id="finFilesToggleLabel">Loading…</span>
+      <span class="fin-files-chevron" aria-hidden="true">▾</span>
+    </button>
+    <div id="finFilesPanel" class="fin-files-panel" hidden role="listbox" aria-labelledby="finFilesToggle">
+      <ul id="fileList" class="fin-files-list"></ul>
+      <p class="fin-files-empty muted" id="finFilesEmpty" hidden>No CSV files yet. Upload or drop a file above.</p>
+    </div>
+  </div>
+  <p id="msg" class="err" style="display:none;"></p>
+
+  <div class="fin-controls-strip">
+    <div class="fin-controls-inner">
+      <div class="fin-view-modes">
+        <label><input type="radio" name="viewMode" value="snapshot" checked /> Snapshot (one CSV)</label>
+        <label><input type="radio" name="viewMode" value="aggregate" /> Aggregate (ledger)</label>
+      </div>
+      <div class="fin-date-range" aria-label="Statement date range">
+        <div class="fin-date-field">
+          <span class="fin-date-range-label">From</span>
+          <div class="date-nav fin-date-nav" role="group" aria-label="Range start date">
+            <input type="date" id="dateStart" class="date-nav-hidden-date" tabindex="-1" aria-hidden="true" />
+            <button type="button" class="date-nav-arrow" id="dateStartPrev" title="Previous day" aria-label="Move start date back one day">←</button>
+            <div class="date-nav-center">
+              <button type="button" class="date-chip date-chip-pick" id="dateStartPick" title="Choose start date"></button>
+            </div>
+            <button type="button" class="date-nav-arrow" id="dateStartNext" title="Next day" aria-label="Move start date forward one day">→</button>
+          </div>
+        </div>
+        <div class="fin-date-field">
+          <span class="fin-date-range-label">To</span>
+          <div class="date-nav fin-date-nav" role="group" aria-label="Range end date">
+            <input type="date" id="dateEnd" class="date-nav-hidden-date" tabindex="-1" aria-hidden="true" />
+            <button type="button" class="date-nav-arrow" id="dateEndPrev" title="Previous day" aria-label="Move end date back one day">←</button>
+            <div class="date-nav-center">
+              <button type="button" class="date-chip date-chip-pick" id="dateEndPick" title="Choose end date"></button>
+            </div>
+            <button type="button" class="date-nav-arrow" id="dateEndNext" title="Next day" aria-label="Move end date forward one day">→</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p id="viewLabel" class="muted"></p>
+  <div id="retitleProgressWrap" class="retitle-progress-wrap" hidden>
+    <div id="retitleProgressViewLine"></div>
+    <div class="retitle-progress-track"><div id="retitleProgressFill" class="retitle-progress-fill"></div></div>
+    <div id="retitleProgressGlobalLine" class="muted" style="font-size:0.78rem;margin-top:0.35rem;"></div>
+  </div>
+  <div id="ledgerLlmLiveWrap" class="ledger-llm-live-wrap" hidden>
+    <div class="ledger-llm-live-head">Ledger LLM (live)</div>
+    <div id="ledgerLlmLiveMeta" class="ledger-llm-live-meta"></div>
+    <div id="ledgerLlmLiveBarTrack" class="ledger-llm-live-bar-track">
+      <div id="ledgerLlmLiveBarFill" class="ledger-llm-live-bar-fill"></div>
+    </div>
+    <div id="ledgerLlmLiveStep" class="ledger-llm-live-step"></div>
+    <div id="ledgerLlmLiveDetail" class="ledger-llm-live-detail"></div>
+    <ul id="ledgerLlmLiveLog" class="ledger-llm-live-log" hidden></ul>
+  </div>
+  <p id="llmLabelsBanner" class="llm-labels-banner" hidden role="status"></p>
+
+  <div class="insights-toolbar">
+    <div class="insights-toolbar-left">
+      <button type="button" class="primary" id="btnInsights" disabled>Refresh insights (LLM)</button>
+      <label class="lux-toggle" for="toggleExcludeSavBrk" title="When on, typical savings and brokerage transfer debits (SAV/BRK) are omitted from spending charts, KPIs, and the AI digest. Bank totals in KPIs stay full; running balance stays the statement line.">
+        <input type="checkbox" id="toggleExcludeSavBrk" autocomplete="off" />
+        <span class="lux-toggle-track"><span class="lux-toggle-thumb"></span></span>
+        <span class="lux-toggle-text">
+          <span class="lux-toggle-title">Exclude SAV · BRK in insights</span>
+          <span class="lux-toggle-hint">Charts and spend KPIs ignore SAV/BRK transfer debits. Full credits/debits totals still match the statement; all rows stay in transaction lists.</span>
+        </span>
+      </label>
+    </div>
+    <span id="activeFile" class="muted insights-toolbar-meta">No file selected (snapshot)</span>
+  </div>
+  <div id="insightBox" class="insight-prose insight-muted" style="margin:0.75rem 0 1.25rem;">Insights use bank descriptions whenever LLM titles are not ready yet, run after charts load (debounced), and are saved in your ledger database so the same date range does not re-call the model. Use Refresh insights for a new LLM pass.</div>
+
+  <div id="kpiStrip" class="kpi-strip" hidden>
+    <div class="kpi-card"><span class="kpi-label">Money in</span><span class="kpi-value kpi-pos" id="kpiMoneyIn">—</span></div>
+    <div class="kpi-card"><span class="kpi-label">Money out</span><span class="kpi-value kpi-neg" id="kpiMoneyOut">—</span></div>
+    <div class="kpi-card"><span class="kpi-label">Net</span><span class="kpi-value" id="kpiNet">—</span></div>
+    <div class="kpi-card"><span class="kpi-label">Savings rate</span><span class="kpi-value kpi-muted" id="kpiSavings">—</span></div>
+    <div class="kpi-card"><span class="kpi-label">Avg daily spend</span><span class="kpi-value kpi-muted" id="kpiAvgDaily">—</span></div>
+    <div class="kpi-card"><span class="kpi-label">Largest debit</span><span class="kpi-value kpi-muted" id="kpiLargest">—</span></div>
+  </div>
+
+  <div class="charts">
+    <div class="card chart-card" id="balanceCard" data-chart-key="bal" tabindex="0" role="button" aria-label="Expand balance chart"><h2 id="balanceChartTitle">Running balance</h2><div class="chart-wrap"><canvas id="chBalance"></canvas></div></div>
+    <div class="card chart-card" data-chart-key="cashflow" tabindex="0" role="button" aria-label="Expand cash in versus spending chart"><h2>Cash in vs spending (by day)</h2><div class="chart-wrap"><canvas id="chCashflow"></canvas></div></div>
+    <div class="card chart-card" data-chart-key="weekly" tabindex="0" role="button" aria-label="Expand weekly spending chart"><h2>Weekly spending</h2><div class="chart-wrap"><canvas id="chWeekly"></canvas></div></div>
+    <div class="card chart-card" data-chart-key="dailynet" tabindex="0" role="button" aria-label="Expand daily net flow chart"><h2>Daily net flow</h2><div class="chart-wrap"><canvas id="chDailyNet"></canvas></div></div>
+    <div class="card chart-card" data-chart-key="spendmix" tabindex="0" role="button" aria-label="Expand spending mix chart"><h2>Spending mix by category</h2><div class="chart-wrap"><canvas id="chSpendmix"></canvas></div></div>
+    <div class="card chart-card" data-chart-key="outflows" tabindex="0" role="button" aria-label="Expand top outflows chart"><h2>Top outflows</h2><div class="chart-wrap"><canvas id="chOutflows"></canvas></div></div>
+  </div>
+
+  <div id="chartExpandModal" class="chart-modal" hidden aria-modal="true" role="dialog" aria-labelledby="chartExpandTitle">
+    <div class="chart-modal-backdrop" data-close-chart-modal aria-hidden="true"></div>
+    <div class="chart-modal-panel">
+      <div class="chart-modal-header">
+        <h2 id="chartExpandTitle">Chart</h2>
+        <button type="button" class="btn-like" id="chartExpandClose">Close</button>
+      </div>
+      <p class="muted chart-modal-hint">Click outside or press Esc to close.</p>
+      <div class="chart-modal-wrap"><canvas id="chartExpandCanvas"></canvas></div>
+    </div>
+  </div>
+
+  <div id="categoryDrillModal" class="chart-modal" hidden aria-modal="true" role="dialog" aria-labelledby="categoryDrillTitle">
+    <div class="chart-modal-backdrop" data-close-drill-modal aria-hidden="true"></div>
+    <div class="chart-modal-panel category-drill-panel">
+      <div class="chart-modal-header">
+        <h2 id="categoryDrillTitle">Transactions</h2>
+        <button type="button" class="btn-like" id="categoryDrillClose">Close</button>
+      </div>
+      <p class="muted chart-modal-hint" id="categoryDrillSubtitle" hidden></p>
+      <p class="muted chart-modal-hint" id="categoryDrillHint"></p>
+      <ul id="categoryDrillList" class="category-drill-list"></ul>
+    </div>
+  </div>
+
+  </div>
+  </div>
+
+  <script>
+(function () {
+  const THEME_LS_KEY = "scheduler-theme-mode";
+  const DAY_START_HOUR = 7;
+  const DAY_END_HOUR = 19;
+  const themeToggleEl = document.getElementById("fin-theme-toggle");
+
+  function autoThemeNow() {
+    const h = new Date().getHours();
+    return h >= DAY_START_HOUR && h < DAY_END_HOUR ? "light" : "dark";
+  }
+
+  function readMode() {
+    try {
+      const raw = localStorage.getItem(THEME_LS_KEY);
+      if (raw === "light" || raw === "dark" || raw === "auto") return raw;
+    } catch (_) {}
+    return "auto";
+  }
+
+  function applyTheme(theme) {
+    const t = theme === "dark" ? "dark" : "light";
+    if (document.documentElement.dataset.theme !== t) {
+      document.documentElement.dataset.theme = t;
+    }
+  }
+
+  function refreshThemeToggleChrome(mode) {
+    if (!themeToggleEl) return;
+    const buttons = themeToggleEl.querySelectorAll("button[data-theme-mode]");
+    buttons.forEach(function (b) {
+      const m = b.getAttribute("data-theme-mode");
+      b.classList.toggle("active", m === mode);
+    });
+  }
+
+  function resolveAndApply() {
+    const mode = readMode();
+    applyTheme(mode === "auto" ? autoThemeNow() : mode);
+    refreshThemeToggleChrome(mode);
+    if (typeof window.__finRefreshChartsForTheme === "function") {
+      window.__finRefreshChartsForTheme();
+    }
+  }
+
+  if (themeToggleEl) {
+    themeToggleEl.addEventListener("click", function (ev) {
+      const target = ev.target;
+      if (!(target instanceof HTMLElement)) return;
+      const btn = target.closest("button[data-theme-mode]");
+      if (!btn) return;
+      const mode = btn.getAttribute("data-theme-mode") || "auto";
+      try {
+        localStorage.setItem(THEME_LS_KEY, mode);
+      } catch (_) {}
+      resolveAndApply();
+    });
+  }
+
+  resolveAndApply();
+  setInterval(resolveAndApply, 60_000);
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) resolveAndApply();
+  });
+})();
+  </script>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const drop = $("drop");
+    const pick = $("pick");
+    const msg = $("msg");
+    const fileList = $("fileList");
+    const finFilesToggle = $("finFilesToggle");
+    const finFilesPanel = $("finFilesPanel");
+    const finFilesEmpty = $("finFilesEmpty");
+    const btnInsights = $("btnInsights");
+    const activeFile = $("activeFile");
+    const toggleExcludeSavBrk = $("toggleExcludeSavBrk");
+    const dateStart = $("dateStart");
+    const dateEnd = $("dateEnd");
+
+    function finPad2(n) {
+      return String(n).padStart(2, "0");
+    }
+    function finLocalDateISO(d) {
+      return d.getFullYear() + "-" + finPad2(d.getMonth() + 1) + "-" + finPad2(d.getDate());
+    }
+    function finAddDaysIso(iso, deltaDays) {
+      const parts = iso.split("-").map(Number);
+      const t = new Date(parts[0], parts[1] - 1, parts[2]);
+      t.setDate(t.getDate() + deltaDays);
+      return finLocalDateISO(t);
+    }
+    function finFormatChipLabel(iso) {
+      if (!iso) return "";
+      const parts = iso.split("-").map(Number);
+      const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+      return new Intl.DateTimeFormat(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }).format(dt);
+    }
+    function finOpenDatePicker(inputEl) {
+      if (!inputEl) return;
+      if (typeof inputEl.showPicker === "function") {
+        try {
+          inputEl.showPicker();
+          return;
+        } catch (_) {
+          /* fall through */
+        }
+      }
+      inputEl.click();
+    }
+    function finClampRange() {
+      if (dateStart.value && dateEnd.value && dateStart.value > dateEnd.value) {
+        dateEnd.value = dateStart.value;
+      }
+    }
+    function finRefreshRangeChrome() {
+      const ds = finFormatChipLabel(dateStart.value);
+      const de = finFormatChipLabel(dateEnd.value);
+      const sp = $("dateStartPick");
+      const ep = $("dateEndPick");
+      if (sp) {
+        sp.textContent = dateStart.value ? ds : "Start";
+        sp.setAttribute(
+          "aria-label",
+          dateStart.value ? "Choose start date, currently " + ds : "Choose start date",
+        );
+      }
+      if (ep) {
+        ep.textContent = dateEnd.value ? de : "End";
+        ep.setAttribute(
+          "aria-label",
+          dateEnd.value ? "Choose end date, currently " + de : "Choose end date",
+        );
+      }
+    }
+    function finBumpStart(delta) {
+      if (!dateStart.value) return;
+      dateStart.value = finAddDaysIso(dateStart.value, delta);
+      finClampRange();
+      finRefreshRangeChrome();
+      loadCharts();
+    }
+    function finBumpEnd(delta) {
+      if (!dateEnd.value) return;
+      dateEnd.value = finAddDaysIso(dateEnd.value, delta);
+      if (dateStart.value && dateEnd.value < dateStart.value) {
+        dateStart.value = dateEnd.value;
+      }
+      finRefreshRangeChrome();
+      loadCharts();
+    }
+
+    const viewLabel = $("viewLabel");
+    let selectedFile = null;
+    let charts = {};
+    let chartConfigs = { bal: null, cashflow: null, weekly: null, dailynet: null, spendmix: null, outflows: null };
+    let lastOutflowsFull = [];
+    let lastSpendmixFull = [];
+    let lastTransactions = [];
+    let lastSpendMixMeta = [];
+    let modalChart = null;
+    let ledgerMeta = {
+      transaction_count: 0,
+      min_date: null,
+      max_date: null,
+      files: [],
+      ledger_debit_count: 0,
+      retitle_pending_count: 0,
+      retitle_complete_count: 0,
+    };
+    let insightsRequestSerial = 0;
+    let autoInsightsDebounceTimer = null;
+    const AUTO_INSIGHTS_DEBOUNCE_MS = 550;
+    const LS_EXCLUDE_SAV_BRK = "financialAnalytics.excludeSavBrkInsights";
+
+    let titleLabelsPollTimer = null;
+    const TITLE_LABEL_POLL_MS = 2200;
+    const TITLE_LABEL_POLL_MAX = 12;
+    const LOADING_LLM_TITLES = "Loading LLM titles…";
+    /** Shown on axis next to raw payee text while ledger LLM titles are still pending. */
+    const LLM_TITLE_PENDING_SUFFIX = " · LLM…";
+
+    function clearTitleLabelsPoll() {
+      if (titleLabelsPollTimer != null) {
+        clearTimeout(titleLabelsPollTimer);
+        titleLabelsPollTimer = null;
+      }
+    }
+
+    let ledgerLlmPollTimer = null;
+    let ledgerLlmHideTimer = null;
+    let ledgerLlmLogLines = [];
+    const LEDGER_LLM_POLL_MS = 400;
+    const LEDGER_LLM_LOG_MAX = 12;
+
+    function clearLedgerLlmPoll() {
+      if (ledgerLlmPollTimer != null) {
+        clearInterval(ledgerLlmPollTimer);
+        ledgerLlmPollTimer = null;
+      }
+    }
+
+    function clearLedgerLlmHideTimer() {
+      if (ledgerLlmHideTimer != null) {
+        clearTimeout(ledgerLlmHideTimer);
+        ledgerLlmHideTimer = null;
+      }
+    }
+
+    function appendLedgerLlmLog(step, detail) {
+      const d = String(detail || "").trim();
+      if (!d) return;
+      const line = step ? String(step) + ": " + d : d;
+      if (ledgerLlmLogLines.length && ledgerLlmLogLines[ledgerLlmLogLines.length - 1] === line) return;
+      ledgerLlmLogLines.push(line);
+      while (ledgerLlmLogLines.length > LEDGER_LLM_LOG_MAX) ledgerLlmLogLines.shift();
+    }
+
+    function humanizeLedgerStep(step) {
+      if (!step) return "";
+      return String(step).replace(/_/g, " ");
+    }
+
+    function applyLedgerLlmProgress(p) {
+      const wrap = $("ledgerLlmLiveWrap");
+      if (!wrap || !p || typeof p !== "object") return;
+      const meta = $("ledgerLlmLiveMeta");
+      const track = $("ledgerLlmLiveBarTrack");
+      const fill = $("ledgerLlmLiveBarFill");
+      const stepEl = $("ledgerLlmLiveStep");
+      const detailEl = $("ledgerLlmLiveDetail");
+      const logEl = $("ledgerLlmLiveLog");
+      if (Array.isArray(p.progress_log)) {
+        ledgerLlmLogLines = p.progress_log.slice(-LEDGER_LLM_LOG_MAX);
+      } else if (p.detail) {
+        appendLedgerLlmLog(p.step, p.detail);
+      }
+
+      const parts = [];
+      if (p.model) parts.push("Model: " + p.model);
+      if (p.gateway) parts.push("Gateway: " + String(p.gateway).replace(/\/$/, ""));
+      if (p.phase && p.phase !== "idle") parts.push("Phase: " + p.phase);
+      if (p.title_round != null) parts.push("Title pass: " + p.title_round);
+      if (p.mix_round != null) parts.push("Mix pass: " + p.mix_round);
+      if (meta) meta.textContent = parts.join(" · ");
+
+      if (stepEl) stepEl.textContent = humanizeLedgerStep(p.step);
+      if (detailEl) detailEl.textContent = String(p.detail || "");
+
+      if (track && fill) {
+        if (typeof p.percent === "number" && Number.isFinite(p.percent)) {
+          track.classList.remove("indeterminate");
+          fill.style.width = Math.max(0, Math.min(100, p.percent)) + "%";
+        } else if (p.active) {
+          track.classList.add("indeterminate");
+          fill.style.width = "";
+        } else {
+          track.classList.remove("indeterminate");
+          fill.style.width = p.phase === "error" ? "0%" : (fill.style.width || "0%");
+        }
+      }
+
+      if (logEl) {
+        if (ledgerLlmLogLines.length) {
+          logEl.removeAttribute("hidden");
+          logEl.innerHTML = ledgerLlmLogLines.map((ln) => "<li>" + escapeHtml(ln) + "</li>").join("");
+        } else {
+          logEl.setAttribute("hidden", "");
+          logEl.innerHTML = "";
+        }
+      }
+
+      wrap.classList.toggle("ledger-llm-error", p.phase === "error");
+      const show = !!(p.active || p.phase === "error" || (p.step && p.step !== "done" && p.phase !== "idle"));
+      if (show || (p.step === "done" && !p.active)) {
+        wrap.removeAttribute("hidden");
+      }
+      if (!show && p.step !== "done") {
+        wrap.setAttribute("hidden", "");
+      }
+
+      if (p.phase === "error") {
+        clearLedgerLlmPoll();
+        clearLedgerLlmHideTimer();
+        return;
+      }
+      if (!p.active && p.step === "done" && p.phase === "idle") {
+        clearLedgerLlmPoll();
+        clearLedgerLlmHideTimer();
+        ledgerLlmHideTimer = setTimeout(() => {
+          ledgerLlmHideTimer = null;
+          const w = $("ledgerLlmLiveWrap");
+          if (w) w.setAttribute("hidden", "");
+          ledgerLlmLogLines = [];
+          const le = $("ledgerLlmLiveLog");
+          if (le) {
+            le.setAttribute("hidden", "");
+            le.innerHTML = "";
+          }
+        }, 2800);
+      }
+    }
+
+    async function pollLedgerLlmOnce() {
+      try {
+        const r = await fetch("/api/ledger_llm_progress");
+        const p = await r.json();
+        if (!r.ok) return;
+        applyLedgerLlmProgress(p);
+      } catch (_) {}
+    }
+
+    function startLedgerLlmPoll() {
+      clearLedgerLlmHideTimer();
+      clearLedgerLlmPoll();
+      ledgerLlmLogLines = [];
+      pollLedgerLlmOnce();
+      ledgerLlmPollTimer = setInterval(pollLedgerLlmOnce, LEDGER_LLM_POLL_MS);
+    }
+
+    function ensureLedgerLlmPoll() {
+      clearLedgerLlmHideTimer();
+      if (ledgerLlmPollTimer != null) {
+        pollLedgerLlmOnce();
+        return;
+      }
+      pollLedgerLlmOnce();
+      ledgerLlmPollTimer = setInterval(pollLedgerLlmOnce, LEDGER_LLM_POLL_MS);
+    }
+
+    function outflowRawDisplayName(o) {
+      if (!o) return "";
+      if (o.display_label != null && String(o.display_label).trim() !== "")
+        return String(o.display_label).trim();
+      return String(o.label || "").trim();
+    }
+
+    function outflowAxisLabel(o) {
+      const raw = outflowRawDisplayName(o);
+      const maxLen = 44;
+      if (o && o.display_title_loading) {
+        const suf = LLM_TITLE_PENDING_SUFFIX;
+        if (raw.length + suf.length <= maxLen) return raw + suf;
+        const room = maxLen - suf.length;
+        return truncateLabel(raw, Math.max(8, room)) + suf;
+      }
+      return truncateLabel(raw, maxLen);
+    }
+
+    function readExcludeSavBrkPreference() {
+      try {
+        const v = localStorage.getItem(LS_EXCLUDE_SAV_BRK);
+        if (v === null) return false;
+        return v === "1" || v === "true";
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function writeExcludeSavBrkPreference(on) {
+      try {
+        localStorage.setItem(LS_EXCLUDE_SAV_BRK, on ? "1" : "0");
+      } catch (_) {}
+    }
+
+    const CAT_COLORS = ["#2563eb", "#7c3aed", "#db2777", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#0d9488", "#4f46e5", "#9333ea", "#be123c", "#c2410c"];
+
+    const moneyFmt = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+    function fmtMoney(v) {
+      return moneyFmt.format(Number(v) || 0);
+    }
+
+    function catColors(n) {
+      const out = [];
+      for (let i = 0; i < n; i++) out.push(CAT_COLORS[i % CAT_COLORS.length]);
+      return out;
+    }
+
+    function tooltipMoneyLabel(ctx) {
+      const v = ctx.raw;
+      const prefix = ctx.dataset && ctx.dataset.label ? ctx.dataset.label + ": " : "";
+      return prefix + fmtMoney(v);
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function transactionsForSpendMixRow(meta) {
+      if (!meta || !lastTransactions.length) return [];
+      return lastTransactions.filter((t) => {
+        const a = Number(t.amount);
+        if (!(a < 0)) return false;
+        if (t.spend_category !== meta.parent_category) return false;
+        if (meta.drill === "other_rest") {
+          const ex = new Set(meta.exclude_subcategories || []);
+          return !!(t.spend_subcategory && !ex.has(t.spend_subcategory));
+        }
+        if (meta.drill === "sub") {
+          return t.spend_subcategory === meta.subcategory;
+        }
+        return !t.spend_subcategory;
+      });
+    }
+
+    function closeCategoryDrill() {
+      const m = $("categoryDrillModal");
+      const sub = $("categoryDrillSubtitle");
+      if (sub) {
+        sub.textContent = "";
+        sub.setAttribute("hidden", "");
+      }
+      if (m) m.setAttribute("hidden", "");
+    }
+
+    function payeeKey(description) {
+      const key = String(description || "").trim();
+      if (key.length > 48) return key.slice(0, 45) + "…";
+      return key;
+    }
+
+    function outflowBarClickIndex(chart, chartEvent, elements) {
+      if (elements && elements.length > 0) return elements[0].index;
+      if (!chart || !chartEvent) return null;
+      try {
+        const byIndex = chart.getElementsAtEventForMode(
+          chartEvent,
+          "index",
+          { intersect: false },
+          false
+        );
+        if (byIndex && byIndex.length > 0) return byIndex[0].index;
+        const near = chart.getElementsAtEventForMode(
+          chartEvent,
+          "nearest",
+          { intersect: false, axis: "y" },
+          false
+        );
+        if (near && near.length > 0) return near[0].index;
+      } catch (_) {}
+      const native = chartEvent.native != null ? chartEvent.native : chartEvent;
+      return outflowBarClickIndexFallback(chart, native);
+    }
+
+    function outflowBarClickIndexFallback(chart, nativeEvent) {
+      const yScale = chart.scales && chart.scales.y;
+      const n = (chart.data && chart.data.labels && chart.data.labels.length) || 0;
+      if (!yScale || !nativeEvent || !chart.canvas || n === 0) return null;
+      const rect = chart.canvas.getBoundingClientRect();
+      const y = nativeEvent.clientY - rect.top;
+      let best = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < n; i++) {
+        const py = yScale.getPixelForTick(i);
+        if (typeof py !== "number" || !Number.isFinite(py)) continue;
+        const d = Math.abs(y - py);
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      }
+      let band =
+        n > 1
+          ? Math.abs(yScale.getPixelForTick(1) - yScale.getPixelForTick(0))
+          : Math.max(8, (yScale.bottom - yScale.top) / n);
+      if (!Number.isFinite(band) || band < 1) band = 20;
+      if (bestDist > band * 0.75) return null;
+      return best;
+    }
+
+    function openOutflowDrill(payeeLabel, friendlyTitle) {
+      const pk = payeeLabel != null ? String(payeeLabel).trim() : "";
+      const ft = friendlyTitle != null ? String(friendlyTitle).trim() : "";
+      const rows = lastTransactions.filter((t) => {
+        const a = Number(t.amount);
+        if (!(a < 0)) return false;
+        return payeeKey(t.description) === pk;
+      });
+      $("categoryDrillTitle").textContent = truncateLabel(pk || "Outflow", 72);
+      const subEl = $("categoryDrillSubtitle");
+      if (subEl) {
+        if (ft && pk && ft !== pk) {
+          subEl.textContent = "Display label: " + truncateLabel(ft, 80);
+          subEl.removeAttribute("hidden");
+        } else {
+          subEl.textContent = "";
+          subEl.setAttribute("hidden", "");
+        }
+      }
+      const n = rows.length;
+      let hint = n
+        ? n + " debit" + (n === 1 ? "" : "s") + " (sorted by date). "
+        : "No matching debits for this payee key — try clicking the purple bar. ";
+      hint += "Each line shows the bank description from your statement.";
+      $("categoryDrillHint").textContent = hint;
+      const ul = $("categoryDrillList");
+      ul.innerHTML = "";
+      rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      for (const t of rows) {
+        const li = document.createElement("li");
+        const left = document.createElement("div");
+        const desc = document.createElement("div");
+        desc.className = "drill-bank-text";
+        desc.innerHTML = escapeHtml(t.description || "");
+        left.appendChild(desc);
+        if (t.display_title && String(t.display_title).trim()) {
+          const fEl = document.createElement("div");
+          fEl.className = "drill-friendly-title";
+          fEl.textContent = "LLM title: " + String(t.display_title).trim();
+          left.appendChild(fEl);
+        }
+        const dm = document.createElement("div");
+        dm.className = "drill-meta";
+        dm.textContent = t.date || "";
+        left.appendChild(dm);
+        const amt = document.createElement("span");
+        amt.className = "drill-amt";
+        amt.textContent = fmtMoney(t.amount);
+        li.appendChild(left);
+        li.appendChild(amt);
+        ul.appendChild(li);
+      }
+      $("categoryDrillModal").removeAttribute("hidden");
+    }
+
+    function openCategoryDrill(index) {
+      const meta = lastSpendMixMeta[index];
+      if (!meta) return;
+      const subEl0 = $("categoryDrillSubtitle");
+      if (subEl0) {
+        subEl0.textContent = "";
+        subEl0.setAttribute("hidden", "");
+      }
+      const rows = transactionsForSpendMixRow(meta);
+      $("categoryDrillTitle").textContent = (meta.chart_display_label && String(meta.chart_display_label).trim())
+        ? meta.chart_display_label
+        : (meta.label || "Transactions");
+      const n = rows.length;
+      $("categoryDrillHint").textContent = n
+        ? n + " debit" + (n === 1 ? "" : "s") + " in this slice (sorted by date)."
+        : "No matching debits.";
+      const ul = $("categoryDrillList");
+      ul.innerHTML = "";
+      rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      for (const t of rows) {
+        const li = document.createElement("li");
+        const left = document.createElement("div");
+        if (t.display_title && String(t.display_title).trim()) {
+          const ft = document.createElement("div");
+          ft.className = "drill-friendly-title";
+          ft.textContent = t.display_title;
+          left.appendChild(ft);
+        }
+        const desc = document.createElement("div");
+        desc.innerHTML = escapeHtml(t.description || "");
+        const dm = document.createElement("div");
+        dm.className = "drill-meta";
+        dm.textContent = t.date || "";
+        left.appendChild(desc);
+        left.appendChild(dm);
+        const amt = document.createElement("span");
+        amt.className = "drill-amt";
+        amt.textContent = fmtMoney(t.amount);
+        li.appendChild(left);
+        li.appendChild(amt);
+        ul.appendChild(li);
+      }
+      $("categoryDrillModal").removeAttribute("hidden");
+    }
+
+    function truncateLabel(s, maxLen) {
+      const t = String(s || "");
+      return t.length > maxLen ? t.slice(0, maxLen - 1) + "…" : t;
+    }
+
+    function spendMixAxisLabel(meta) {
+      if (!meta) return "";
+      if (meta.mix_label_loading) return truncateLabel(LOADING_LLM_TITLES, 40);
+      const s = meta.chart_display_label != null && String(meta.chart_display_label).trim() !== ""
+        ? meta.chart_display_label
+        : meta.label;
+      return truncateLabel(String(s || ""), 40);
+    }
+
+    function paintRetitleProgress(rp, globalLineText) {
+      const wrap = $("retitleProgressWrap");
+      const vline = $("retitleProgressViewLine");
+      const fill = $("retitleProgressFill");
+      const gline = $("retitleProgressGlobalLine");
+      if (!wrap || !vline || !fill || !gline) return;
+      if (!rp || typeof rp !== "object") {
+        wrap.setAttribute("hidden", "");
+        return;
+      }
+      const p = Number(rp.pending);
+      const e = Number(rp.eligible);
+      if (!Number.isFinite(p) || !Number.isFinite(e)) {
+        wrap.setAttribute("hidden", "");
+        return;
+      }
+      if (e === 0) {
+        wrap.setAttribute("hidden", "");
+        return;
+      }
+      const done = Math.max(0, e - p);
+      const pct = e > 0 ? Math.min(100, Math.round((100 * done) / e)) : 100;
+      vline.textContent = p
+        ? `This view: ${p} debit(s) still need LLM title + category (${done} of ${e} done in range).`
+        : `This view: all ${e} debit(s) are titled and categorized.`;
+      fill.style.width = pct + "%";
+      if (globalLineText) {
+        gline.textContent = globalLineText;
+        gline.style.display = "";
+      } else {
+        gline.textContent = "";
+        gline.style.display = "none";
+      }
+      wrap.removeAttribute("hidden");
+    }
+
+    function llmLabelsBannerText(d) {
+      const a = !!d.display_titles_pending;
+      const b = !!d.mix_chart_labels_pending;
+      if (!a && !b) return "";
+      if (a && b) {
+        return "LLM labels in progress: transaction titles and spending-category bar labels are still updating. Charts may show placeholders until ready.";
+      }
+      if (a) return "LLM labels in progress: short transaction titles are still generating.";
+      return "LLM labels in progress: spending mix bar labels are still generating (transaction titles are ready).";
+    }
+
+    function populateKpis(k) {
+      const strip = $("kpiStrip");
+      if (!strip) return;
+      if (!k || typeof k !== "object") {
+        strip.hidden = true;
+        return;
+      }
+      strip.hidden = false;
+      $("kpiMoneyIn").textContent = fmtMoney(k.income_total);
+      $("kpiMoneyOut").textContent = fmtMoney(k.expense_total);
+      $("kpiNet").textContent = fmtMoney(k.net_flow);
+      $("kpiNet").className = "kpi-value " + (Number(k.net_flow) >= 0 ? "kpi-pos" : "kpi-neg");
+      const sr = k.savings_rate_pct;
+      $("kpiSavings").textContent = sr == null ? "—" : sr + "%";
+      $("kpiAvgDaily").textContent = fmtMoney(k.avg_daily_expense);
+      const lo = k.largest_outflow;
+      if (lo && lo.amount != null) {
+        const desc = truncateLabel(lo.description || "", 44);
+        $("kpiLargest").textContent = fmtMoney(lo.amount) + (desc ? " · " + desc : "");
+      } else {
+        $("kpiLargest").textContent = "—";
+      }
+    }
+
+    const CHART_KEYS = ["bal", "cashflow", "weekly", "dailynet", "spendmix", "outflows"];
+
+    function finCssVar(name, fallback) {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      return raw || fallback;
+    }
+
+    function finChartTickColor() {
+      return finCssVar("--fin-chart-tick", finCssVar("--muted", "#71717a"));
+    }
+
+    function finChartGridColor() {
+      return finCssVar("--fin-chart-grid", "rgba(0, 0, 0, 0.08)");
+    }
+
+    /** Cartesian axis skin for Chart.js (readable in light + dark). */
+    function finThemedScale(tickExtra) {
+      const tc = finChartTickColor();
+      const gc = finChartGridColor();
+      return {
+        ticks: Object.assign({ color: tc }, tickExtra || {}),
+        grid: { color: gc },
+        border: { color: gc },
+      };
+    }
+
+    function refreshFinChartsForTheme() {
+      if (typeof Chart === "undefined") return;
+      const tick = finChartTickColor();
+      const grid = finChartGridColor();
+      const patch = (ch) => {
+        if (!ch || !ch.options) return;
+        const scales = ch.options.scales;
+        if (scales && typeof scales === "object") {
+          Object.keys(scales).forEach((k) => {
+            const s = scales[k];
+            if (!s) return;
+            s.ticks = s.ticks || {};
+            s.ticks.color = tick;
+            s.grid = s.grid || {};
+            s.grid.color = grid;
+            s.border = s.border || {};
+            s.border.color = grid;
+          });
+        }
+        const leg = ch.options.plugins && ch.options.plugins.legend;
+        if (leg && leg.labels) {
+          leg.labels.color = tick;
+        }
+        ch.update("none");
+      };
+      CHART_KEYS.forEach((k) => patch(charts[k]));
+      patch(modalChart);
+    }
+    window.__finRefreshChartsForTheme = refreshFinChartsForTheme;
+
+    function resetChartsAndKpis() {
+      clearTitleLabelsPoll();
+      clearLedgerLlmPoll();
+      clearLedgerLlmHideTimer();
+      ledgerLlmLogLines = [];
+      const llw = $("ledgerLlmLiveWrap");
+      if (llw) {
+        llw.setAttribute("hidden", "");
+        llw.classList.remove("ledger-llm-error");
+      }
+      const lle = $("ledgerLlmLiveLog");
+      if (lle) {
+        lle.setAttribute("hidden", "");
+        lle.innerHTML = "";
+      }
+      const b = $("llmLabelsBanner");
+      if (b) b.setAttribute("hidden", "");
+      const rw0 = $("retitleProgressWrap");
+      if (rw0) rw0.setAttribute("hidden", "");
+      CHART_KEYS.forEach(destroyChart);
+      chartConfigs = { bal: null, cashflow: null, weekly: null, dailynet: null, spendmix: null, outflows: null };
+      const ks = $("kpiStrip");
+      if (ks) ks.hidden = true;
+      lastTransactions = [];
+      lastSpendMixMeta = [];
+      lastSpendmixFull = [];
+      lastOutflowsFull = [];
+    }
+
+    function clearAutoInsightsSchedule() {
+      if (autoInsightsDebounceTimer) {
+        clearTimeout(autoInsightsDebounceTimer);
+        autoInsightsDebounceTimer = null;
+      }
+    }
+
+    function scheduleAutoInsights() {
+      clearAutoInsightsSchedule();
+      autoInsightsDebounceTimer = setTimeout(() => {
+        autoInsightsDebounceTimer = null;
+        runInsightsGeneration({ force: false });
+      }, AUTO_INSIGHTS_DEBOUNCE_MS);
+    }
+
+    async function runInsightsGeneration(opts) {
+      const force = opts && opts.force === true;
+      const mode = getViewMode();
+      if (mode === "snapshot" && !selectedFile) return;
+      if (mode === "aggregate" && ledgerMeta.transaction_count === 0) return;
+
+      const mySerial = ++insightsRequestSerial;
+      showErr("");
+      btnInsights.disabled = true;
+      setInsightsPlain(force ? "Generating fresh insights…" : "Generating insights…", { muted: true });
+      try {
+        const body = {
+          mode,
+          start: dateStart.value || null,
+          end: dateEnd.value || null,
+          exclude_sav_brk_transfers: !!(toggleExcludeSavBrk && toggleExcludeSavBrk.checked),
+          force,
+        };
+        if (mode === "snapshot") body.file = selectedFile;
+        const r = await fetch("/api/insights", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (mySerial !== insightsRequestSerial) return;
+        if (!r.ok) {
+          const hint = j.hint ? "\n\n" + j.hint : "";
+          setInsightsPlain((j.error || "Failed") + (j.detail ? "\n" + j.detail : "") + hint, { error: true });
+          return;
+        }
+        setInsightsMarkdown(j.insights || "");
+      } catch (e) {
+        if (mySerial !== insightsRequestSerial) return;
+        setInsightsPlain(String(e.message || e), { error: true });
+      } finally {
+        if (mySerial === insightsRequestSerial) updateInsightButtonState();
+      }
+    }
+
+    function setInsightsMarkdown(text) {
+      const el = $("insightBox");
+      el.classList.remove("insight-muted", "insight-error");
+      const raw = String(text || "").trim();
+      if (!raw) {
+        el.innerHTML = "";
+        return;
+      }
+      const html = marked.parse(raw, { breaks: true, gfm: true });
+      el.innerHTML = DOMPurify.sanitize(html);
+    }
+
+    function setInsightsPlain(text, opts) {
+      const el = $("insightBox");
+      const muted = opts && opts.muted !== false;
+      const err = opts && opts.error;
+      el.innerHTML = "";
+      el.textContent = text;
+      el.classList.toggle("insight-muted", muted && !err);
+      el.classList.toggle("insight-error", !!err);
+    }
+
+    function cloneCfg(obj) {
+      return JSON.parse(JSON.stringify(obj));
+    }
+
+    function closeChartModal() {
+      const modal = $("chartExpandModal");
+      if (modalChart) {
+        modalChart.destroy();
+        modalChart = null;
+      }
+      if (modal) modal.setAttribute("hidden", "");
+    }
+
+    function openChartModal(key) {
+      const base = chartConfigs[key];
+      if (!base) return;
+      const modal = $("chartExpandModal");
+      const card = document.querySelector('.chart-card[data-chart-key="' + key + '"]');
+      const h2 = card && card.querySelector("h2");
+      $("chartExpandTitle").textContent = h2 ? h2.textContent.trim() : "Chart";
+      if (modalChart) {
+        modalChart.destroy();
+        modalChart = null;
+      }
+      const expanded = cloneCfg(base);
+      expanded.options = expanded.options || {};
+      expanded.options.plugins = expanded.options.plugins || {};
+      expanded.options.plugins.legend = expanded.options.plugins.legend || {};
+      expanded.options.plugins.legend.display = true;
+      if (expanded.options.scales && expanded.options.scales.x && expanded.options.scales.x.ticks) {
+        const prev = expanded.options.scales.x.ticks.maxTicksLimit || 14;
+        expanded.options.scales.x.ticks.maxTicksLimit = Math.max(prev, 28);
+      }
+      if (key === "outflows") {
+        if (lastOutflowsFull.length) {
+          expanded.data.labels = lastOutflowsFull.map((x) => outflowAxisLabel(x));
+          expanded.data.datasets[0].data = lastOutflowsFull.map((x) => x.spent);
+          expanded.options.scales = expanded.options.scales || {};
+          expanded.options.scales.y = expanded.options.scales.y || {};
+          expanded.options.scales.y.ticks = { autoSkip: false, maxRotation: 0, font: { size: 11 } };
+          expanded.options.scales.y.border = { display: false };
+          expanded.options.layout = expanded.options.layout || {};
+          const lp = expanded.options.layout.padding || {};
+          expanded.options.layout.padding = {
+            left: 56,
+            right: typeof lp.right === "number" ? lp.right : 12,
+            top: typeof lp.top === "number" ? lp.top : 8,
+            bottom: typeof lp.bottom === "number" ? lp.bottom : 8,
+          };
+        }
+        if (charts.outflows && charts.outflows.options) {
+          const srcOpts = charts.outflows.options;
+          if (typeof srcOpts.onClick === "function") {
+            expanded.options.onClick = srcOpts.onClick;
+          }
+          const srcTip = srcOpts.plugins && srcOpts.plugins.tooltip;
+          if (srcTip) {
+            expanded.options.plugins.tooltip = Object.assign(
+              {},
+              expanded.options.plugins.tooltip || {},
+              srcTip
+            );
+          }
+        }
+      }
+      if (key === "spendmix" && lastSpendmixFull.length) {
+        expanded.data.labels = lastSpendmixFull.map((x) => x.name);
+        expanded.data.datasets[0].data = lastSpendmixFull.map((x) => x.total);
+        expanded.data.datasets[0].backgroundColor = catColors(lastSpendmixFull.length);
+        expanded.options.scales = expanded.options.scales || {};
+        expanded.options.scales.y = expanded.options.scales.y || {};
+        expanded.options.scales.y.ticks = { autoSkip: false, maxRotation: 0, font: { size: 11 } };
+        expanded.options.scales.y.border = { display: false };
+        expanded.options.layout = expanded.options.layout || {};
+        const lps = expanded.options.layout.padding || {};
+        expanded.options.layout.padding = {
+          left: 48,
+          right: typeof lps.right === "number" ? lps.right : 12,
+          top: typeof lps.top === "number" ? lps.top : 8,
+          bottom: typeof lps.bottom === "number" ? lps.bottom : 8,
+        };
+      }
+      modal.removeAttribute("hidden");
+      modalChart = new Chart($("chartExpandCanvas"), expanded);
+      refreshFinChartsForTheme();
+    }
+
+    function getViewMode() {
+      const sel = document.querySelector('input[name="viewMode"]:checked');
+      return sel ? sel.value : "snapshot";
+    }
+
+    function showErr(t) {
+      msg.style.display = t ? "block" : "none";
+      msg.textContent = t || "";
+    }
+
+    function updateInsightButtonState() {
+      const mode = getViewMode();
+      if (mode === "aggregate") {
+        btnInsights.disabled = ledgerMeta.transaction_count === 0;
+        activeFile.textContent = ledgerMeta.transaction_count
+          ? `Ledger: ${ledgerMeta.transaction_count} tx`
+          : "Ledger empty — upload CSVs or Reindex";
+      } else {
+        btnInsights.disabled = !selectedFile;
+        activeFile.textContent = selectedFile || "No file selected (snapshot)";
+      }
+    }
+
+    function appendRangeParams(u) {
+      if (dateStart.value) u.searchParams.set("start", dateStart.value);
+      if (dateEnd.value) u.searchParams.set("end", dateEnd.value);
+    }
+
+    function setFinFilesToggleLabel(n) {
+      const el = $("finFilesToggleLabel");
+      if (!el) return;
+      if (n === 0) el.textContent = "No CSV files on server";
+      else if (n === 1) el.textContent = "1 CSV file — open to choose or remove";
+      else el.textContent = n + " CSV files — open to choose or remove";
+    }
+
+    function setFinFilesOpen(open) {
+      if (!finFilesPanel || !finFilesToggle) return;
+      if (open) {
+        finFilesPanel.removeAttribute("hidden");
+        finFilesToggle.setAttribute("aria-expanded", "true");
+      } else {
+        finFilesPanel.setAttribute("hidden", "");
+        finFilesToggle.setAttribute("aria-expanded", "false");
+      }
+    }
+
+    async function removeServerFile(name) {
+      const ok = window.confirm(
+        "Delete “" + name + "” from disk? The ledger will be rebuilt from the remaining CSVs.",
+      );
+      if (!ok) return;
+      showErr("");
+      try {
+        const u = new URL("/api/files", window.location.origin);
+        u.searchParams.set("file", name);
+        const r = await fetch(u, { method: "DELETE" });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          showErr(j.error || "Delete failed");
+          return;
+        }
+        if (selectedFile === name) selectedFile = null;
+        await refreshFiles(true);
+        await refreshLedgerMeta();
+        loadCharts();
+        setFinFilesOpen(false);
+      } catch (e) {
+        showErr(String(e.message || e));
+      }
+    }
+
+    async function refreshLedgerMeta() {
+      try {
+        const r = await fetch("/api/ledger_meta");
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || "ledger_meta failed");
+        ledgerMeta = j;
+        const mn = j.min_date;
+        const mx = j.max_date;
+        if (mn && mx && !dateStart.value && !dateEnd.value) {
+          const startObj = new Date(mn + "T12:00:00");
+          const endObj = new Date(mx + "T12:00:00");
+          const span = Math.round((endObj - startObj) / (86400 * 1000));
+          if (span > 31) {
+            const d = new Date(endObj);
+            d.setDate(d.getDate() - 30);
+            dateStart.value = d.toISOString().slice(0, 10);
+          } else {
+            dateStart.value = mn;
+          }
+          dateEnd.value = mx;
+        }
+        updateInsightButtonState();
+        const vf = (j.files || []).length;
+        viewLabel.textContent = mn && mx
+          ? `Ledger spans ${mn} — ${mx} · ${j.transaction_count || 0} unique tx · ${vf} file(s) ingested`
+          : "Ledger empty — upload a CSV or click Reindex ledger.";
+        finRefreshRangeChrome();
+      } catch (e) {
+        viewLabel.textContent = "";
+        showErr(String(e.message || e));
+      }
+    }
+
+    async function refreshFiles(keepSelection) {
+      showErr("");
+      const r = await fetch("/api/files");
+      const j = await r.json();
+      const names = j.files || [];
+      fileList.innerHTML = "";
+      names.forEach((name) => {
+        const li = document.createElement("li");
+        li.className = "fin-file-row";
+        li.setAttribute("role", "option");
+        li.dataset.file = name;
+        const pick = document.createElement("span");
+        pick.className = "fin-file-pick";
+        pick.textContent = name;
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "fin-file-remove";
+        rm.setAttribute("aria-label", "Remove " + name + " from server");
+        rm.title = "Delete CSV from disk and rebuild ledger";
+        rm.textContent = "×";
+        rm.addEventListener("click", (e) => {
+          e.stopPropagation();
+          void removeServerFile(name);
+        });
+        li.appendChild(pick);
+        li.appendChild(rm);
+        li.addEventListener("click", (e) => {
+          if (e.target.closest(".fin-file-remove")) return;
+          selectFile(name, li);
+          setFinFilesOpen(false);
+        });
+        if (name === selectedFile) li.classList.add("active");
+        fileList.appendChild(li);
+      });
+      if (finFilesEmpty) {
+        finFilesEmpty.hidden = names.length > 0;
+      }
+      setFinFilesToggleLabel(names.length);
+      if (keepSelection && selectedFile && !names.includes(selectedFile)) {
+        selectedFile = null;
+      }
+      updateInsightButtonState();
+    }
+
+    function selectFile(name, li) {
+      selectedFile = name;
+      document.querySelector('input[name="viewMode"][value="snapshot"]').checked = true;
+      updateInsightButtonState();
+      [...fileList.querySelectorAll("li.fin-file-row")].forEach((x) => x.classList.remove("active"));
+      if (li) li.classList.add("active");
+      loadCharts();
+    }
+
+    async function uploadFile(file) {
+      showErr("");
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!r.ok) {
+        showErr(j.error || "Upload failed");
+        return;
+      }
+      startLedgerLlmPoll();
+      await refreshFiles(false);
+      await refreshLedgerMeta();
+      [...fileList.querySelectorAll("li.fin-file-row")].forEach((li) => {
+        if (li.dataset.file === j.file) selectFile(j.file, li);
+      });
+      if (!selectedFile && j.file) {
+        const lis = [...fileList.querySelectorAll("li.fin-file-row")];
+        const hit = lis.find((li) => li.dataset.file === j.file);
+        selectFile(j.file, hit || null);
+      }
+    }
+
+    function destroyChart(key) {
+      if (charts[key]) { charts[key].destroy(); charts[key] = null; }
+    }
+
+    async function fetchSummary() {
+      const mode = getViewMode();
+      const u = new URL("/api/summary", window.location.origin);
+      if (mode === "aggregate") {
+        u.searchParams.set("mode", "aggregate");
+        appendRangeParams(u);
+      } else {
+        if (!selectedFile) throw new Error("Select a CSV file for snapshot.");
+        u.searchParams.set("mode", "snapshot");
+        u.searchParams.set("file", selectedFile);
+        appendRangeParams(u);
+      }
+      if (toggleExcludeSavBrk && toggleExcludeSavBrk.checked) {
+        u.searchParams.set("exclude_sav_brk_transfers", "1");
+      }
+      const r = await fetch(u);
+      const d = await r.json();
+      if (!r.ok) {
+        const hint = d.hint ? " " + d.hint : "";
+        throw new Error((d.error || "Summary failed") + hint);
+      }
+      return d;
+    }
+
+    async function loadCharts(pollAttempt) {
+      clearTitleLabelsPoll();
+      const attempt = Number(pollAttempt) || 0;
+      showErr("");
+      const mode = getViewMode();
+      if (mode === "snapshot" && !selectedFile) {
+        viewLabel.textContent = "Select a file for snapshot view.";
+        const b0 = $("llmLabelsBanner");
+        if (b0) b0.setAttribute("hidden", "");
+        const rw = $("retitleProgressWrap");
+        if (rw) rw.setAttribute("hidden", "");
+        resetChartsAndKpis();
+        clearAutoInsightsSchedule();
+        insightsRequestSerial += 1;
+        return;
+      }
+      try {
+        const d = await fetchSummary();
+        if (
+          mode === "aggregate" &&
+          (attempt > 0 || d.display_titles_pending || d.mix_chart_labels_pending)
+        ) {
+          await refreshLedgerMeta();
+        }
+        const view = d.view || {};
+        if (mode === "aggregate") {
+          $("balanceChartTitle").textContent = "Cumulative net (deduplicated)";
+          const cf = (view.contributing_files || []).join(", ");
+          let aggLabel = `Aggregate${view.date_range_start ? ` · ${view.date_range_start} – ${view.date_range_end}` : ""}${cf ? ` · sources: ${cf}` : ""}`;
+          if (view.exclude_sav_brk_transfers) {
+            aggLabel += " · SAV/BRK transfer debits hidden in charts";
+          }
+          viewLabel.textContent = aggLabel;
+        } else {
+          $("balanceChartTitle").textContent = "Running balance";
+          let snapLabel = `Snapshot: ${selectedFile}${view.date_range_start ? ` · clipped ${view.date_range_start} – ${view.date_range_end}` : ""}`;
+          if (view.exclude_sav_brk_transfers) {
+            snapLabel += " · SAV/BRK transfer debits hidden in charts";
+          }
+          viewLabel.textContent = snapLabel;
+        }
+
+        const gLine =
+          Number(ledgerMeta.ledger_debit_count) > 0
+            ? `Full ledger: ${ledgerMeta.retitle_pending_count} of ${ledgerMeta.ledger_debit_count} debit(s) still flagged overall.`
+            : "";
+        paintRetitleProgress(d.retitle_progress, gLine || null);
+
+        const banner = $("llmLabelsBanner");
+        if (banner) {
+          const bt = llmLabelsBannerText(d);
+          if (bt) {
+            banner.textContent = bt;
+            banner.removeAttribute("hidden");
+          } else {
+            banner.setAttribute("hidden", "");
+          }
+        }
+
+        populateKpis(d.kpi);
+
+        const bal = d.series_balance || [];
+        const cum = d.series_cumulative_net || [];
+        const useBalance = mode === "snapshot" && bal.length > 0;
+        const balLabels = useBalance ? bal.map((x) => x.date) : cum.map((x) => x.date);
+        const balValues = useBalance ? bal.map((x) => x.balance) : cum.map((x) => x.cumulative_net);
+        const balLineLabel = useBalance ? "Balance" : "Cumulative net";
+
+        const cf = d.series_cash_flow_daily || [];
+        const wk = d.series_weekly_expenses || [];
+        const dailyNet = d.series_daily_net || [];
+        lastTransactions = d.transactions || [];
+        const mix = (d.spending_mix_chart && d.spending_mix_chart.length)
+          ? d.spending_mix_chart
+          : (d.spending_by_category || []).slice(0, 12).map((x) => ({
+              label: x.name,
+              total: x.total,
+              pct_of_spend: x.pct,
+              count: x.count,
+              parent_category: x.name,
+              subcategory: null,
+              drill: "parent",
+            }));
+        lastSpendMixMeta = mix;
+        lastSpendmixFull = mix.map((x) => ({
+          name: spendMixAxisLabel(x),
+          total: x.total,
+          pct: x.pct_of_spend,
+        }));
+        const smLabels = mix.map((x) => spendMixAxisLabel(x));
+        const outs = (d.top_outflows || []).slice(0, 10);
+        lastOutflowsFull = outs.map((o) => ({
+          label: o.label,
+          display_label: o.display_label != null ? o.display_label : null,
+          display_title_loading: !!o.display_title_loading,
+          spent: o.spent,
+          total: o.total,
+        }));
+
+        const balConfig = {
+          type: "line",
+          data: {
+            labels: balLabels,
+            datasets: [{
+              label: balLineLabel,
+              data: balValues,
+              tension: 0.1,
+              borderColor: finCssVar("--accent", "#2563eb"),
+              backgroundColor: document.documentElement.dataset.theme === "dark"
+                ? "rgba(232, 182, 117, 0.12)"
+                : "rgba(37,99,235,0.15)"
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: balLabels.length > 0,
+                labels: { color: finChartTickColor() },
+              },
+              tooltip: { callbacks: { label: tooltipMoneyLabel } }
+            },
+            scales: {
+              x: finThemedScale({ maxRotation: 0, autoSkip: true, maxTicksLimit: 14 }),
+              y: finThemedScale({ callback: (v) => fmtMoney(v) }),
+            }
+          }
+        };
+        destroyChart("bal");
+        charts.bal = new Chart($("chBalance"), balConfig);
+        chartConfigs.bal = cloneCfg(balConfig);
+
+        const cashflowConfig = {
+          type: "bar",
+          data: {
+            labels: cf.map((x) => x.date),
+            datasets: [
+              {
+                label: "In (credits)",
+                data: cf.map((x) => x.inflow),
+                backgroundColor: "rgba(22,163,74,0.78)"
+              },
+              {
+                label: "Out (debits)",
+                data: cf.map((x) => x.outflow),
+                backgroundColor: "rgba(220,38,38,0.78)"
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: cf.length > 0,
+                labels: { color: finChartTickColor() },
+              },
+              tooltip: { callbacks: { label: tooltipMoneyLabel } }
+            },
+            scales: {
+              x: finThemedScale({ maxRotation: 0, autoSkip: true, maxTicksLimit: 14 }),
+              y: Object.assign(finThemedScale({ callback: (v) => fmtMoney(v) }), { beginAtZero: true }),
+            }
+          }
+        };
+        destroyChart("cashflow");
+        charts.cashflow = new Chart($("chCashflow"), cashflowConfig);
+        chartConfigs.cashflow = cloneCfg(cashflowConfig);
+
+        const weeklyConfig = {
+          type: "line",
+          data: {
+            labels: wk.map((x) => x.week_start),
+            datasets: [{
+              label: "Spent this week",
+              data: wk.map((x) => x.spent),
+              tension: 0.25,
+              fill: true,
+              borderColor: "#c2410c",
+              backgroundColor: "rgba(194,65,12,0.14)"
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: wk.length > 0,
+                labels: { color: finChartTickColor() },
+              },
+              tooltip: { callbacks: { label: tooltipMoneyLabel } }
+            },
+            scales: {
+              x: finThemedScale({ maxRotation: 0, autoSkip: true, maxTicksLimit: 12 }),
+              y: Object.assign(finThemedScale({ callback: (v) => fmtMoney(v) }), { beginAtZero: true }),
+            }
+          }
+        };
+        destroyChart("weekly");
+        charts.weekly = new Chart($("chWeekly"), weeklyConfig);
+        chartConfigs.weekly = cloneCfg(weeklyConfig);
+
+        const dailyNetConfig = {
+          type: "bar",
+          data: {
+            labels: dailyNet.map((x) => x.date),
+            datasets: [{
+              label: "Net (credits minus debits)",
+              data: dailyNet.map((x) => x.net),
+              backgroundColor: dailyNet.map((x) =>
+                (Number(x.net) >= 0 ? "rgba(22,163,74,0.78)" : "rgba(220,38,38,0.78)")
+              )
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: dailyNet.length > 0,
+                labels: { color: finChartTickColor() },
+              },
+              tooltip: { callbacks: { label: tooltipMoneyLabel } }
+            },
+            scales: {
+              x: finThemedScale({ maxRotation: 0, autoSkip: true, maxTicksLimit: 14 }),
+              y: finThemedScale({ callback: (v) => fmtMoney(v) }),
+            }
+          }
+        };
+        destroyChart("dailynet");
+        charts.dailynet = new Chart($("chDailyNet"), dailyNetConfig);
+        chartConfigs.dailynet = cloneCfg(dailyNetConfig);
+
+        const spendmixConfig = {
+          type: "bar",
+          data: {
+            labels: smLabels,
+            datasets: [{
+              label: "Spent",
+              data: mix.map((x) => x.total),
+              backgroundColor: catColors(mix.length)
+            }]
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: {
+              padding: { left: 72, right: 8, top: 4, bottom: 6 },
+            },
+            onClick: (e, elements) => {
+              if (elements.length) {
+                if (e.native && typeof e.native.stopPropagation === "function") {
+                  e.native.stopPropagation();
+                }
+                openCategoryDrill(elements[0].index);
+              }
+            },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  title: (items) => {
+                    const i = items[0]?.dataIndex;
+                    if (i == null || !mix[i]) return "";
+                    const row = mix[i];
+                    if (row.mix_label_loading) return LOADING_LLM_TITLES;
+                    const show = row.chart_display_label && String(row.chart_display_label).trim()
+                      ? row.chart_display_label
+                      : row.label;
+                    return String(show || "");
+                  },
+                  label: (ctx) => {
+                    const i = ctx.dataIndex;
+                    const row = mix[i];
+                    const pct = row && row.pct_of_spend != null
+                      ? " (" + row.pct_of_spend + "% of spend)"
+                      : "";
+                    let bank = "";
+                    if (row && row.mix_label_loading && row.label) {
+                      bank = " · " + row.label;
+                    }
+                    return "Spent: " + fmtMoney(ctx.raw) + pct + bank;
+                  },
+                },
+              },
+            },
+            scales: {
+              x: Object.assign(finThemedScale({ callback: (v) => fmtMoney(v) }), { beginAtZero: true }),
+              y: (() => {
+                const s = finThemedScale({ autoSkip: false, maxRotation: 0, font: { size: 11 } });
+                s.border = Object.assign({}, s.border, { display: false });
+                return s;
+              })(),
+            }
+          }
+        };
+        destroyChart("spendmix");
+        charts.spendmix = new Chart($("chSpendmix"), spendmixConfig);
+        chartConfigs.spendmix = cloneCfg(spendmixConfig);
+
+        const outflowConfig = {
+          type: "bar",
+          data: {
+            labels: outs.map((o) => outflowAxisLabel(o)),
+            datasets: [{
+              label: "Spent",
+              data: outs.map((o) => o.spent),
+              backgroundColor: "rgba(124,58,237,0.85)"
+            }]
+          },
+          options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: {
+              padding: { left: 92, right: 8, top: 4, bottom: 6 },
+            },
+            onClick: (e, elements, chart) => {
+              const i = outflowBarClickIndex(chart, e, elements);
+              if (i == null) return;
+              if (e.native && typeof e.native.stopPropagation === "function") {
+                e.native.stopPropagation();
+              }
+              const o = outs[i];
+              if (!o) return;
+              openOutflowDrill(o.label, o.display_label || o.label);
+            },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  title: (items) => {
+                    const i = items[0]?.dataIndex;
+                    if (i == null || !outs[i]) return "";
+                    const o = outs[i];
+                    const raw = outflowRawDisplayName(o);
+                    if (o.display_title_loading) {
+                      return raw ? raw + "\n(LLM-refined title loading)" : "(LLM-refined title loading)";
+                    }
+                    const friendly = o.display_label && String(o.display_label).trim();
+                    return friendly ? String(o.display_label) : String(o.label || "");
+                  },
+                  afterLabel: (ctx) => {
+                    const i = ctx.dataIndex;
+                    const o = outs[i];
+                    if (!o) return "";
+                    if (o.display_title_loading) {
+                      const bits = [];
+                      if (o.label && String(o.label) !== String(outflowRawDisplayName(o))) {
+                        bits.push("Bank: " + o.label);
+                      }
+                      bits.push("Showing raw name until LLM title is ready.");
+                      return bits.join("\n");
+                    }
+                    const friendly = o.display_label && String(o.display_label).trim();
+                    if (friendly && o.label && String(o.display_label) !== String(o.label)) {
+                      return "Bank: " + o.label;
+                    }
+                    return "";
+                  },
+                  label: tooltipMoneyLabel,
+                },
+              },
+            },
+            scales: {
+              x: Object.assign(finThemedScale({ callback: (v) => fmtMoney(v) }), { beginAtZero: true }),
+              y: (() => {
+                const s = finThemedScale({
+                  autoSkip: false,
+                  maxRotation: 0,
+                  font: { size: 11 },
+                });
+                s.border = Object.assign({}, s.border, { display: false });
+                return s;
+              })(),
+            },
+          },
+        };
+        destroyChart("outflows");
+        charts.outflows = new Chart($("chOutflows"), outflowConfig);
+        chartConfigs.outflows = cloneCfg(outflowConfig);
+        if ((d.display_titles_pending || d.mix_chart_labels_pending) && attempt < TITLE_LABEL_POLL_MAX) {
+          titleLabelsPollTimer = setTimeout(() => {
+            titleLabelsPollTimer = null;
+            loadCharts(attempt + 1);
+          }, TITLE_LABEL_POLL_MS);
+        }
+        if (d.display_titles_pending || d.mix_chart_labels_pending) {
+          ensureLedgerLlmPoll();
+        }
+        scheduleAutoInsights();
+      } catch (e) {
+        clearTitleLabelsPoll();
+        showErr(String(e.message || e));
+        resetChartsAndKpis();
+        clearAutoInsightsSchedule();
+      }
+    }
+
+    document.querySelectorAll(".chart-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        const key = card.getAttribute("data-chart-key");
+        if (key) openChartModal(key);
+      });
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          const key = card.getAttribute("data-chart-key");
+          if (key) openChartModal(key);
+        }
+      });
+    });
+    $("chartExpandClose").onclick = closeChartModal;
+    document.querySelectorAll("[data-close-chart-modal]").forEach((el) => {
+      el.addEventListener("click", closeChartModal);
+    });
+    $("categoryDrillClose").onclick = closeCategoryDrill;
+    document.querySelectorAll("[data-close-drill-modal]").forEach((el) => {
+      el.addEventListener("click", closeCategoryDrill);
+    });
+    document.addEventListener("keydown", (e) => {
+      const modal = $("chartExpandModal");
+      const drill = $("categoryDrillModal");
+      if (e.key === "Escape") {
+        if (drill && !drill.hasAttribute("hidden")) closeCategoryDrill();
+        else if (modal && !modal.hasAttribute("hidden")) closeChartModal();
+        else setFinFilesOpen(false);
+      }
+    });
+
+    const finFilesWrap = $("finFilesWrap");
+    if (finFilesToggle && finFilesPanel) {
+      finFilesToggle.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setFinFilesOpen(finFilesPanel.hasAttribute("hidden"));
+      });
+    }
+    document.addEventListener("click", (e) => {
+      if (finFilesWrap && finFilesWrap.contains(e.target)) return;
+      setFinFilesOpen(false);
+    });
+
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.classList.remove("drag");
+      const f = e.dataTransfer.files[0];
+      if (f) uploadFile(f);
+    });
+    drop.addEventListener("click", () => pick.click());
+    pick.addEventListener("change", () => {
+      const f = pick.files[0];
+      if (f) uploadFile(f);
+      pick.value = "";
+    });
+    $("btnReload").onclick = () => { refreshFiles(true); refreshLedgerMeta(); };
+    $("btnLedgerMeta").onclick = () => refreshLedgerMeta();
+    $("btnReindex").onclick = async () => {
+      showErr("");
+      setInsightsPlain("Reindexing ledger…", { muted: true });
+      try {
+        const r = await fetch("/api/reindex", { method: "POST" });
+        const j = await r.json();
+        if (!r.ok) {
+          showErr(j.error || "Reindex failed");
+          setInsightsPlain("Reindex did not complete.", { error: true });
+          return;
+        }
+        setInsightsPlain("Reindex done: " + (j.files ?? 0) + " file(s).", { muted: true });
+        startLedgerLlmPoll();
+        await refreshLedgerMeta();
+        loadCharts();
+      } catch (e) {
+        showErr(String(e.message || e));
+        setInsightsPlain("Reindex request failed.", { error: true });
+      }
+    };
+
+    document.querySelectorAll('input[name="viewMode"]').forEach((el) => {
+      el.addEventListener("change", () => { updateInsightButtonState(); loadCharts(); });
+    });
+    dateStart.addEventListener("change", () => {
+      finClampRange();
+      finRefreshRangeChrome();
+      loadCharts();
+    });
+    dateEnd.addEventListener("change", () => {
+      finClampRange();
+      finRefreshRangeChrome();
+      loadCharts();
+    });
+
+    $("dateStartPrev").addEventListener("click", () => finBumpStart(-1));
+    $("dateStartNext").addEventListener("click", () => finBumpStart(1));
+    $("dateEndPrev").addEventListener("click", () => finBumpEnd(-1));
+    $("dateEndNext").addEventListener("click", () => finBumpEnd(1));
+    $("dateStartPick").addEventListener("click", () => finOpenDatePicker(dateStart));
+    $("dateEndPick").addEventListener("click", () => finOpenDatePicker(dateEnd));
+
+    btnInsights.onclick = () => {
+      clearAutoInsightsSchedule();
+      runInsightsGeneration({ force: true });
+    };
+
+    if (toggleExcludeSavBrk) {
+      toggleExcludeSavBrk.checked = readExcludeSavBrkPreference();
+      toggleExcludeSavBrk.addEventListener("change", () => {
+        writeExcludeSavBrkPreference(toggleExcludeSavBrk.checked);
+        loadCharts();
+        scheduleAutoInsights();
+      });
+    }
+
+    refreshFiles(false);
+    finRefreshRangeChrome();
+    refreshLedgerMeta().then(() => {
+      finRefreshRangeChrome();
+      loadCharts();
+    });
+  </script>
+</body>
+</html>

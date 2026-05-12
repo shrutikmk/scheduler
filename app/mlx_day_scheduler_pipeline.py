@@ -27,6 +27,18 @@ def _local_wall_clock_snapshot() -> tuple[int, date]:
     return now.hour * 60 + now.minute, now.date()
 
 
+def system_iana_timezone_name() -> str:
+    """Best-effort IANA id for the host process clock (``datetime.now().astimezone()``)."""
+    tz = datetime.now().astimezone().tzinfo
+    key = getattr(tz, "key", None)
+    if isinstance(key, str) and key:
+        return key
+    name = tz.tzname(datetime.now()) if tz else None
+    if name and "/" in name:
+        return name
+    return "UTC"
+
+
 def _minutes_to_ampm(total_minutes: int) -> str:
     total_minutes = total_minutes % (24 * 60)
     h24, m = divmod(total_minutes, 60)
@@ -37,13 +49,42 @@ def _minutes_to_ampm(total_minutes: int) -> str:
     return f"{h12}:{m:02d} {ampm}"
 
 
-def _day_scheduler_clock_suffix(*, clock_minutes: int, clock_date: date) -> str:
+def _iana_context_lines(*, client_timezone_iana: str | None) -> str:
+    sys_tz = system_iana_timezone_name()
+    ui_tz = (client_timezone_iana or "").strip()
+    if ui_tz:
+        if ui_tz == sys_tz:
+            agree = f"UI-reported IANA **{ui_tz}** matches host system zone (cross-check OK).\n"
+        else:
+            agree = (
+                f"UI-reported IANA **{ui_tz}** ≠ host system zone **{sys_tz}** "
+                "(cross-check: interpret this turn’s bullets as **UI-local** wall times).\n"
+            )
+    else:
+        agree = (
+            f"No UI zone in payload; host system IANA **{sys_tz}** applies to "
+            "local wall times.\n"
+        )
+    return f"Host process IANA (system clock): **{sys_tz}**.\n{agree}"
+
+
+def _day_scheduler_clock_suffix(
+    *,
+    clock_minutes: int,
+    clock_date: date,
+    client_timezone_iana: str | None = None,
+) -> str:
     floor = _minutes_to_ampm(clock_minutes)
+    tz_blk = _iana_context_lines(client_timezone_iana=client_timezone_iana)
     return (
         "\n\n---\n[Clock — local machine]\n"
         "Use **only** this timestamp as “right now” for scheduling "
         "(ignore model training-time priors about dates or times).\n"
         f"Local wall time for **this** prompt: **{floor}** on **{clock_date.isoformat()}**.\n"
+        f"{tz_blk}"
+        "Google Calendar **task** events from this app are written with `start`/`end` "
+        "`timeZone` = UI-reported zone when the user has synced (else host zone), plus private "
+        "metadata echoing that zone and the host zone for debugging.\n"
         "Schedule forward from this instant through the rest of the day.\n"
         f"Hard rule: each `* [time] - …` line must use a start time **at or after {floor}**. "
         "Rebuild from this NOW; earlier times in past assistant messages are stale—"
@@ -141,6 +182,20 @@ def _day_scheduler_user_fact_sheet(user_line: str) -> str | None:
             "- **Meal:** User mentioned dinner—one meal-related block unless they say otherwise."
         )
 
+    if (
+        re.search(r"(?i)\b(?:asap|a\.s\.a\.p\.)\b", s)
+        or re.search(r"(?i)\bright\s+away\b", s)
+        or re.search(r"(?i)\burgent\b", s)
+        or re.search(r"(?i)\burgency\b", s)
+        or re.search(r"(?i)\bneed\s+to\s+.+\s+now\b", s)
+    ):
+        chunks.append(
+            "- **Urgent / ASAP:** The user signaled urgency. Schedule those flexible tasks "
+            "**starting at local NOW** (first feasible row after the clock), and pack them into "
+            "**slack before** fixed-time anchors when they fit—do **not** postpone urgent errands "
+            "past discretionary blocks while leaving that earlier gap unused."
+        )
+
     if not chunks:
         return None
     return (
@@ -190,8 +245,26 @@ def chat_text_for_ui(*, assistant_full: str, user_raw: str) -> str:
 def _extract_chat_tail_after_schedule(text: str) -> str:
     lines = text.splitlines()
     last_i = -1
+
+    try:
+        from schedule_parse import (
+            _EMPTY_PLAN_RE as _schedule_empty_star_re,
+        )
+        from schedule_parse import (
+            normalize_schedule_line_for_parser,
+        )
+    except ImportError:
+
+        def normalize_schedule_line_for_parser(x: str) -> str:
+            return x
+
+        _schedule_empty_star_re = None
+
     for i, line in enumerate(lines):
-        if _SCHED_LINE_RE.match(line.strip()):
+        stripped = normalize_schedule_line_for_parser(line.strip())
+        if _SCHED_LINE_RE.match(stripped):
+            last_i = i
+        elif _schedule_empty_star_re is not None and _schedule_empty_star_re.match(stripped):
             last_i = i
     if last_i < 0:
         return ""
@@ -474,6 +547,7 @@ def prepare_day_scheduler_user_for_prompt(
     host_context: str | None = None,
     clock_minutes: int | None = None,
     clock_date: date | None = None,
+    client_timezone_iana: str | None = None,
 ) -> tuple[str, int, date]:
     """Apply completion meta + facts + hard-clock (+ optional habit context).
 
@@ -482,6 +556,9 @@ def prepare_day_scheduler_user_for_prompt(
 
     When ``clock_minutes`` and ``clock_date`` are set (typically from the browser calendar),
     they override the server's local clock for scheduling semantics.
+
+    ``client_timezone_iana`` comes from ``client_calendar.timezone`` in the gateway payload;
+    it is cross-checked against the host process zone from ``datetime.now().astimezone()``.
     """
     user_visible = user_raw.strip()
     user_for_prompt = user_visible
@@ -524,8 +601,11 @@ def prepare_day_scheduler_user_for_prompt(
             + "\n\n"
         )
 
+    tz_ctx = _iana_context_lines(client_timezone_iana=client_timezone_iana)
+
     user_for_prompt = (
         f"[Hard clock — this turn] Client local NOW = {floor} on {clock_d.isoformat()}.\n"
+        f"[IANA — local wall times]\n{tz_ctx}"
         "For bullets **without** an explicit `* [YYYY-MM-DD]` calendar prefix, times refer to "
         f"that same calendar day (**{clock_d.isoformat()}**) and `[time]` must be **≥ {floor}**.\n"
         "For obligations on another calendar day use `* [YYYY-MM-DD] [time] - …`, with times "
@@ -708,6 +788,7 @@ def generate_day_scheduler_reply(
     host_context: str | None = None,
     client_clock_minutes: int | None = None,
     client_clock_date: date | None = None,
+    client_timezone_iana: str | None = None,
     on_stream_chunk: Callable[[str], None] | None = None,
     on_stream_thinking: Callable[[str], None] | None = None,
     on_thinking_closed: Callable[[], None] | None = None,
@@ -723,10 +804,12 @@ def generate_day_scheduler_reply(
         host_context=host_context,
         clock_minutes=client_clock_minutes,
         clock_date=client_clock_date,
+        client_timezone_iana=client_timezone_iana,
     )
     clock_suffix = _day_scheduler_clock_suffix(
         clock_minutes=clock_minutes,
         clock_date=clock_date,
+        client_timezone_iana=client_timezone_iana,
     )
     effective_system = base_system_prompt + clock_suffix
 
@@ -849,6 +932,326 @@ def generate_day_scheduler_reply(
     history.append(("assistant", reply))
     trim_history_pairs(history, max_history_messages)
     return gen_ok, reply, last_resp
+
+
+def compress_history_for_budget_vllm(
+    *,
+    client: Any,
+    route: Any,
+    tokenizer: Any,
+    system: str,
+    history: list[tuple[Role, str]],
+    pending_user: str,
+    context_limit: int,
+    soft_fraction: float,
+    reserve_tokens: int,
+    keep_recent_messages: int,
+    summarize_max_tokens: int,
+    max_summarize_input_tokens: int,
+    auto_summarize: bool,
+    enable_thinking: bool | None = None,
+    summarize_temperature: float = 0.7,
+    summarize_top_p: float = 0.8,
+) -> tuple[bool, int, int]:
+    """Like :func:`compress_history_for_budget` but calls a vLLM OpenAI server."""
+    from vllm_gateway_routing import VllmRoute
+    from vllm_openai_client import chat_completion_text
+
+    assert isinstance(route, VllmRoute)
+
+    summarizer_system = (
+        "You compress chat transcripts for ongoing context. Output a concise summary only: "
+        "key facts, decisions, names, commitments, and open questions. "
+        "No greeting or preamble."
+    )
+
+    budget = max(256, int(context_limit * soft_fraction) - max(0, reserve_tokens))
+
+    if context_limit <= 0 or soft_fraction <= 0:
+        return (
+            False,
+            prompt_token_count(
+                tokenizer,
+                system,
+                history + [("user", pending_user)],
+                enable_thinking=enable_thinking,
+            ),
+            budget,
+        )
+
+    target_pairs = history + [("user", pending_user)]
+    ntok = prompt_token_count(tokenizer, system, target_pairs, enable_thinking=enable_thinking)
+    if ntok <= budget:
+        return False, ntok, budget
+
+    mutated = False
+
+    cap_in = max(512, min(max_summarize_input_tokens, budget))
+
+    guard = 0
+    while ntok > budget and guard < 24:
+        guard += 1
+        if len(history) <= keep_recent_messages:
+            if not history:
+                break
+            if auto_summarize:
+                drop_n = max(1, len(history) // 4) if len(history) >= 4 else 1
+                del history[:drop_n]
+                mutated = True
+            else:
+                history.pop(0)
+                mutated = True
+            ntok = prompt_token_count(
+                tokenizer,
+                system,
+                history + [("user", pending_user)],
+                enable_thinking=enable_thinking,
+            )
+            continue
+
+        prefix_len = len(history) - keep_recent_messages
+        prefix = history[:prefix_len]
+        tail = history[prefix_len:]
+        if auto_summarize and prefix:
+            try:
+                transcript_lines = [f"{role.upper()}: {text}" for role, text in prefix]
+                while len(transcript_lines) > 2 and _encoded_length(
+                    tokenizer,
+                    "\n".join(transcript_lines),
+                ) > cap_in:
+                    transcript_lines = transcript_lines[max(1, len(transcript_lines) // 8) :]
+
+                transcript = "\n".join(transcript_lines)
+                summ_user = (
+                    "Summarize this conversation excerpt for memory.\n\n"
+                    + transcript
+                )
+                summary = chat_completion_text(
+                    client,
+                    api_base=route.api_base,
+                    model=route.served_model_name,
+                    messages=[
+                        {"role": "system", "content": summarizer_system},
+                        {"role": "user", "content": summ_user},
+                    ],
+                    temperature=float(summarize_temperature),
+                    top_p=float(summarize_top_p),
+                    max_tokens=int(summarize_max_tokens),
+                    enable_thinking=False,
+                )
+                if not summary:
+                    summary = "(Earlier turns omitted — summary unavailable.)"
+                marker = "[Earlier conversation — summarized]\n"
+                history[:] = [
+                    ("user", marker + summary),
+                    (
+                        "assistant",
+                        "Understood; continuing with the recent messages below.",
+                    ),
+                ] + tail
+                mutated = True
+            except Exception:
+                history[:] = tail
+                mutated = True
+        else:
+            history[:] = tail
+            mutated = True
+
+        ntok = prompt_token_count(
+            tokenizer,
+            system,
+            history + [("user", pending_user)],
+            enable_thinking=enable_thinking,
+        )
+
+    return mutated, ntok, budget
+
+
+def generate_day_scheduler_reply_vllm(
+    *,
+    user_raw: str,
+    history: list[tuple[Role, str]],
+    client: Any,
+    route: Any,
+    tokenizer: Any,
+    base_system_prompt: str,
+    template_enable_thinking: bool | None,
+    context_limit: int,
+    soft_fraction: float,
+    reserve_tokens: int,
+    keep_recent_messages: int,
+    summarize_max_tokens: int,
+    max_summarize_input_tokens: int,
+    auto_summarize: bool,
+    max_tokens: int,
+    strip_reasoning: bool,
+    buffer_full_reply: bool,
+    max_history_messages: int,
+    temperature: float,
+    top_p: float,
+    summarize_temperature: float,
+    summarize_top_p: float,
+    host_context: str | None = None,
+    client_clock_minutes: int | None = None,
+    client_clock_date: date | None = None,
+    client_timezone_iana: str | None = None,
+    on_stream_chunk: Callable[[str], None] | None = None,
+    on_stream_thinking: Callable[[str], None] | None = None,
+    on_thinking_closed: Callable[[], None] | None = None,
+    hide_schedule_deltas: bool = False,
+    on_compress: Callable[[bool, int, int], None] | None = None,
+) -> tuple[bool, str, None]:
+    """One scheduler turn via vLLM OpenAI chat completions."""
+    from vllm_gateway_routing import VllmRoute
+    from vllm_openai_client import chat_completion_stream, chat_completion_text
+
+    assert isinstance(route, VllmRoute)
+
+    user_for_prompt, clock_minutes, clock_date = prepare_day_scheduler_user_for_prompt(
+        user_raw,
+        host_context=host_context,
+        clock_minutes=client_clock_minutes,
+        clock_date=client_clock_date,
+        client_timezone_iana=client_timezone_iana,
+    )
+    clock_suffix = _day_scheduler_clock_suffix(
+        clock_minutes=clock_minutes,
+        clock_date=clock_date,
+        client_timezone_iana=client_timezone_iana,
+    )
+    effective_system = base_system_prompt + clock_suffix
+
+    did_compress, p_tokens, budget = compress_history_for_budget_vllm(
+        client=client,
+        route=route,
+        tokenizer=tokenizer,
+        system=effective_system,
+        history=history,
+        pending_user=user_for_prompt,
+        context_limit=context_limit,
+        soft_fraction=soft_fraction,
+        reserve_tokens=reserve_tokens,
+        keep_recent_messages=keep_recent_messages,
+        summarize_max_tokens=summarize_max_tokens,
+        max_summarize_input_tokens=max_summarize_input_tokens,
+        auto_summarize=auto_summarize,
+        enable_thinking=template_enable_thinking,
+        summarize_temperature=summarize_temperature,
+        summarize_top_p=summarize_top_p,
+    )
+    if on_compress is not None:
+        on_compress(did_compress, p_tokens, budget)
+
+    messages: list[dict[str, str]] = [{"role": "system", "content": effective_system}]
+    for role, text in history:
+        messages.append({"role": role, "content": text})
+    messages.append({"role": "user", "content": user_for_prompt})
+
+    stream_schedule = not buffer_full_reply
+    ds_stream_strip = stream_schedule and strip_reasoning
+    ds_stream_raw = stream_schedule and not strip_reasoning
+    stream_tokens_live = ds_stream_raw
+    stream_dual_reasoning = (
+        stream_schedule
+        and not strip_reasoning
+        and on_stream_thinking is not None
+    )
+
+    buf: list[str] = []
+    gen_ok = False
+    think_splitter = ThinkBlockStreamSplitter() if ds_stream_strip else None
+    think_dual = ThinkDualStreamSplitter() if stream_dual_reasoning else None
+    public_splitter = (
+        AssistantPublicStreamSplitter()
+        if stream_schedule and hide_schedule_deltas and on_stream_chunk is not None
+        else None
+    )
+
+    def _route_public_assistant(stream_piece: str) -> None:
+        if not stream_piece or on_stream_chunk is None:
+            return
+        if public_splitter is not None:
+            chunk = public_splitter.feed(stream_piece)
+            if not chunk:
+                return
+            on_stream_chunk(normalize_scheduler_terminal_escapes(chunk))
+            return
+        on_stream_chunk(normalize_scheduler_terminal_escapes(stream_piece))
+
+    try:
+        if stream_schedule:
+            for piece in chat_completion_stream(
+                client,
+                api_base=route.api_base,
+                model=route.served_model_name,
+                messages=messages,
+                temperature=float(temperature),
+                top_p=float(top_p),
+                max_tokens=int(max_tokens),
+                enable_thinking=template_enable_thinking,
+            ):
+                buf.append(piece)
+                if think_dual is not None:
+                    t_piece, a_piece, think_closed_here = think_dual.feed(piece)
+                    if think_closed_here and on_thinking_closed is not None:
+                        on_thinking_closed()
+                    if t_piece and on_stream_thinking is not None:
+                        on_stream_thinking(normalize_scheduler_terminal_escapes(t_piece))
+                    _route_public_assistant(a_piece)
+                elif think_splitter is not None:
+                    frag = think_splitter.feed(piece)
+                    _route_public_assistant(frag)
+                elif stream_tokens_live and on_stream_chunk is not None:
+                    _route_public_assistant(piece)
+        else:
+            text = chat_completion_text(
+                client,
+                api_base=route.api_base,
+                model=route.served_model_name,
+                messages=messages,
+                temperature=float(temperature),
+                top_p=float(top_p),
+                max_tokens=int(max_tokens),
+                enable_thinking=template_enable_thinking,
+            )
+            buf.append(text)
+        gen_ok = True
+    except Exception as e:
+        print(f"\nerror: {e}", file=sys.stderr)
+        return False, "", None
+
+    reply = "".join(buf)
+    if strip_reasoning:
+        reply = strip_reasoning_blocks(reply)
+    if gen_ok:
+        reply = normalize_scheduler_terminal_escapes(reply)
+    if think_dual is not None:
+        t_tail, a_tail = think_dual.flush()
+        if t_tail and on_stream_thinking is not None:
+            on_stream_thinking(normalize_scheduler_terminal_escapes(t_tail))
+        _route_public_assistant(a_tail)
+    elif think_splitter is not None:
+        tail = think_splitter.flush()
+        _route_public_assistant(tail)
+
+    if public_splitter is not None and on_stream_chunk is not None:
+        pub_tail = public_splitter.flush()
+        if pub_tail:
+            on_stream_chunk(normalize_scheduler_terminal_escapes(pub_tail))
+
+    streamed = (
+        stream_tokens_live
+        or think_splitter is not None
+        or think_dual is not None
+    )
+    if not streamed and on_stream_chunk is not None:
+        full = normalize_scheduler_terminal_escapes(reply) if gen_ok else reply
+        on_stream_chunk(full)
+
+    history.append(("user", user_raw))
+    history.append(("assistant", reply))
+    trim_history_pairs(history, max_history_messages)
+    return gen_ok, reply, None
 
 
 def load_day_scheduler_system_prompt(repo_root: Path | None = None) -> str:

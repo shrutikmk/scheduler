@@ -1,0 +1,27 @@
+prompts/airport-timezones.csv
+================================
+
+Upstream: OpenFlights Airport Database (`data/airports.dat`), extended format
+(columns include IANA "tz database" timezone and DST hints).
+
+Downloads / docs:
+  - http://openflights.org/data.php
+  - https://raw.githubusercontent.com/jpatokal/openflights/master/data/airports.dat
+
+This repository file is a derived subset filtered to rows with:
+
+  - Type = airport
+  - A present 3-letter IATA station code
+
+License (upstream): OpenFlights distributes this database under the Open Database License (ODbL)
+with database contents under the Database Contents License (DbCL):
+  - https://opendatacommons.org/licenses/odbl/1-0/
+  - https://opendatacommons.org/licenses/dbcl/1-0/
+
+Acknowledge OpenFlights as the source of the upstream data when publishing further derivatives.
+
+Caveats (from upstream documentation):
+
+  UTC offset and DST marking are coarse (historically tuned around ~2009 rules in places). Prefer
+  the `timezone` column (IANA zone id) at runtime via the OS/tzdb rather than trusting static
+  `utc_offset_hours` for edge cases near DST transitions.

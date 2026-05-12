@@ -1,0 +1,48 @@
+# Personal spending categories
+
+Use these as the primary taxonomy for classifying **debit** purchases. Names are **stable labels** (Title Case); the LLM should pick the closest match or propose exactly one new label when none fit.
+
+- Housing & rent
+- Utilities & telecom
+- Groceries
+- Restaurants & nightlife
+- Coffee & cafes
+- Alcohol & bars
+- Clothing & apparel
+- General merchandise & department stores
+- Amazon & online retail
+- Electronics & computers
+- Software & SaaS
+- Gaming & digital entertainment
+- Streaming & media
+- Personal care & pharmacy
+- Fitness & sports
+- Home improvement & furnishings
+- Auto & fuel
+- Parking & tolls
+- Rideshare & taxi
+- Flights & airlines
+- Lodging & hotels
+- Ground transit & rail
+- Travel activities & entertainment
+- Insurance (non-health)
+- Healthcare & medical
+- Education & books
+- Gifts & donations
+- Pets
+- Childcare & family
+- Government & fees
+- Taxes paid
+- ATM & cash
+- Bank & wire fees
+- Credit card & loan payments
+- Internal transfers & brokerage
+- Internal transfers & savings
+- P2P payments sent (Venmo, Zelle, PayPal friends)
+- Income reversal / refunds (debit)
+- Professional services
+- Business & work expenses
+- Gambling & casinos
+- Misc & uncategorized (only when nothing else fits)
+- Misc & uncategorized
+- Entertainment & theaters

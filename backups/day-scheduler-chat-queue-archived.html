@@ -1,0 +1,140 @@
+<!--
+  Archived excerpt from app/day_scheduler.html (chat FIFO queue UI + driver).
+
+  Removed so the planner accepts only one in-flight chat turn at a time (no
+  queued follow-ups). Revisit by restoring the fragments below into
+  day_scheduler.html and re-wiring handleSend / pollLlmHealth / refreshComposeStatus.
+
+  Archive date: 2026-05-09
+-->
+
+<!-- ——— CSS (was above the generic `button {` rules) ——— -->
+<style type="text/plain">
+    /* ---- Queued-message panel (Cursor-style) ---------------------------- */
+    .queue-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      padding: 0.4rem 0.55rem 0.5rem;
+      width: min(100%, 48rem);
+      margin: 0 auto;
+      background: var(--soft);
+      border: 1px solid var(--border-soft);
+      border-radius: 14px;
+      max-height: 13rem;
+      overflow: auto;
+    }
+    .queue-panel[hidden] { display: none; }
+    .queue-head {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+      padding: 0.05rem 0.1rem;
+    }
+    .queue-twisty {
+      width: 0.85rem;
+      display: inline-flex;
+      justify-content: center;
+      transition: transform 0.12s ease;
+    }
+    .queue-panel[data-collapsed="true"] .queue-list { display: none; }
+    .queue-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .queue-row {
+      display: grid;
+      grid-template-columns: 1.05rem 1fr auto;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.32rem 0.45rem;
+      background: var(--panel);
+      border: 1px solid var(--border-soft);
+      border-radius: 0.5rem;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+    .queue-row.in-flight {
+      border-color: var(--accent-soft);
+      background: var(--accent-soft);
+      opacity: 0.85;
+    }
+    .queue-bullet {
+      width: 0.85rem;
+      height: 0.85rem;
+      border-radius: 999px;
+      border: 1.5px solid var(--muted);
+      display: inline-block;
+      box-sizing: border-box;
+      opacity: 0.6;
+    }
+    .queue-row.in-flight .queue-bullet {
+      border-color: var(--accent);
+      background: var(--accent);
+      opacity: 1;
+    }
+    .queue-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: text;
+    }
+    .queue-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.05rem;
+    }
+    .queue-act {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      width: 1.7rem;
+      height: 1.7rem;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .queue-act:hover {
+      background: var(--soft);
+      border-color: var(--border-soft);
+      color: var(--text);
+    }
+    .queue-act:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .queue-act.danger:hover {
+      color: var(--warn-text);
+      background: var(--warn-bg);
+      border-color: var(--warn-border);
+    }
+    .queue-act svg {
+      width: 0.95rem;
+      height: 0.95rem;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+</style>
+
+<!-- ——— HTML (inside .chat-compose, between #chat-status and .compose-box) ——— -->
+<div class="queue-panel" id="chat-queue" hidden role="list" aria-label="Queued messages"></div>
+
+<!-- Archived JavaScript: backups/day-scheduler-chat-queue-archived.js -->

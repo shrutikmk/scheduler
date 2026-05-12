@@ -43,7 +43,9 @@ Optional query flags you should know:
 
 ## 3. Single timed calendar event
 
-Use **`start.dateTime`** + **`end.dateTime`** with **`timeZone`** (IANA name, e.g. `America/Los_Angeles`).
+Use **`start.dateTime`** + **`end.dateTime`** with **`timeZone`** — **IANA name only**
+(e.g. `America/Los_Angeles`, `America/Chicago`). **Do not** use abbreviation-only zones like **`CDT`**
+or **`PST`** as `timeZone`; map from the airport / city appendix when available.
 
 Minimal JSON body pattern:
 

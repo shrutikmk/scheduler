@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Habit Builder</title>
+  <!-- Theme before paint + embed layout class (iframe from day_scheduler shell). -->
+  <script>
+    (function () {
+      try {
+        var theme = "light";
+        var url = new URL(window.location.href);
+        var qp = url.searchParams.get("theme");
+        if (qp === "light" || qp === "dark") {
+          theme = qp;
+        } else {
+          var h = new Date().getHours();
+          theme = h >= 7 && h < 19 ? "light" : "dark";
+        }
+        document.documentElement.dataset.theme = theme;
+      } catch (_) {
+        document.documentElement.dataset.theme = "light";
+      }
+      if (/\bembed=1\b/.test(location.search)) {
+        document.documentElement.classList.add("embed-shell");
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="habit_builder.css" />
+</head>
+<body>
+  <main class="app-shell">
+  <header class="hero">
+    <div class="hero-top">
+      <div>
+        <h1>Habit Builder</h1>
+        <p class="muted">Track each habit with its own start date, calendar, and progress.</p>
+      </div>
+      <span class="chip">Local save</span>
+    </div>
+    <p id="storage-status" class="muted">Loading saved data…</p>
+  </header>
+
+  <section class="section-card add-card" aria-label="Add a habit">
+    <div class="row">
+      <input type="text" id="title-input" placeholder="Habit title" maxlength="120" />
+      <label class="start-label"
+        >Start
+        <input type="date" id="start-input" aria-label="Program start date (day 0 of week 1)" /></label
+      >
+      <button type="button" id="add-habit" class="primary-button">Add</button>
+    </div>
+  </section>
+
+  <details class="section-card" open>
+    <summary>
+      <span>Habits</span>
+      <span id="habit-list-count" class="chip">0 habits</span>
+    </summary>
+    <div class="section-body">
+      <p id="habit-list-hint" class="habit-list-hint muted" hidden></p>
+      <ul class="habits" id="habit-list" aria-label="Habits"></ul>
+    </div>
+  </details>
+
+  <div id="detail" class="panel" hidden>
+    <div class="detail-head">
+      <div>
+        <span class="muted">Selected habit</span>
+        <strong id="detail-title"></strong>
+      </div>
+      <button type="button" class="danger" id="delete-habit">Delete habit</button>
+    </div>
+    <div class="row">
+      <label class="start-label"
+        >Program start
+        <input type="date" id="detail-start-input" aria-label="Change program start date" /></label
+      >
+    </div>
+
+    <details class="detail-section" open>
+      <summary>Program progress</summary>
+      <div class="section-body">
+        <div id="detail-status" class="muted detail-status-line"></div>
+        <div class="dual-bar-wrap">
+          <div class="bar-row">
+            <span class="bar-caption">Progress</span>
+            <div class="bar">
+              <div class="fill-forgiving" id="progress-fill-forgiving"></div>
+            </div>
+            <span class="bar-pct" id="progress-pct-forgiving"></span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-caption">Long run</span>
+            <div class="bar">
+              <div class="fill" id="progress-fill-strict"></div>
+            </div>
+            <span class="bar-pct" id="progress-pct-strict"></span>
+          </div>
+        </div>
+        <div class="points-summary" id="detail-points" aria-label="Points by phase"></div>
+        <div id="detail-upcoming" class="upcoming" hidden></div>
+      </div>
+    </details>
+
+    <details class="detail-section" open>
+      <summary>Calendar</summary>
+      <div class="section-body">
+        <div class="cal-nav">
+          <button type="button" id="cal-prev" aria-label="Previous month">←</button>
+          <strong id="cal-label"></strong>
+          <button type="button" id="cal-next" aria-label="Next month">→</button>
+        </div>
+        <div class="cal-grid" id="cal-root"></div>
+      </div>
+    </details>
+  </div>
+
+  <details class="rules rules-card">
+    <summary>How the habit program works</summary>
+    <p>
+      Phase 1 uses seven <strong>Sunday–Saturday</strong> calendar weeks. Week 1 is the week that contains your program
+      start; week <em>k</em> needs <em>k</em> logged days anywhere that week (only on/after your start date counts).
+      After Phase 1, <strong>two Phase 2 models</strong> run in parallel: <strong>Progress</strong> (accent bar)
+      milestones 8→90 can be “packed” into your <em>latest</em> contiguous streak; any <strong>90-day</strong> streak in
+      Phase 2 completes the program on that path. <strong>Long run</strong> (green bar) is the original ladder with required
+      rest days between streaks — same rules the day planner deadlines use for streak requirements. Overall
+      <strong>complete</strong> when either path reaches 100%. 100% points = 4095 total. Your habits are written to
+      IndexedDB after every change and mirrored to localStorage for recovery. Data stay on this device only.
+    </p>
+  </details>
+  </main>
+
+  <script defer src="habit_builder.js"></script>
+</body>
+</html>

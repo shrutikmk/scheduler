@@ -81,7 +81,15 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-from mlx_day_scheduler_pipeline import (
+# The day-scheduler product modules live in ``app/`` (see app/mlx_day_scheduler_ui.py).
+# Add it to ``sys.path`` so this CLI keeps working both as a standalone sample
+# and when imported by app/mlx_llm_gateway.py.
+_SAMPLES_DIR = Path(__file__).resolve().parent
+_APP_DIR = _SAMPLES_DIR.parent / "app"
+if _APP_DIR.is_dir() and str(_APP_DIR) not in sys.path:
+    sys.path.insert(0, str(_APP_DIR))
+
+from mlx_day_scheduler_pipeline import (  # noqa: E402
     REPO_ROOT,
     _local_wall_clock_snapshot,
     _minutes_to_ampm,
@@ -89,19 +97,19 @@ from mlx_day_scheduler_pipeline import (
     generate_day_scheduler_reply,
     load_day_scheduler_system_prompt,
 )
-from mlx_day_scheduler_pipeline import (
+from mlx_day_scheduler_pipeline import (  # noqa: E402
     ThinkBlockStreamSplitter as _ThinkBlockStreamSplitter,
 )
-from mlx_day_scheduler_pipeline import (
+from mlx_day_scheduler_pipeline import (  # noqa: E402
     build_prompt as _build_prompt,
 )
-from mlx_day_scheduler_pipeline import (
+from mlx_day_scheduler_pipeline import (  # noqa: E402
     normalize_scheduler_terminal_escapes as _normalize_scheduler_terminal_escapes,
 )
-from mlx_day_scheduler_pipeline import (
+from mlx_day_scheduler_pipeline import (  # noqa: E402
     strip_reasoning_blocks as _strip_reasoning_blocks,
 )
-from mlx_day_scheduler_pipeline import (
+from mlx_day_scheduler_pipeline import (  # noqa: E402
     trim_history_pairs as _trim_history,
 )
 
@@ -225,8 +233,6 @@ def diagnose_local_snapshot(path: Path) -> list[str]:
         issues.append(
             "config.json has no 'model_type' — incomplete or non-HF layout for mlx-lm."
         )
-    else:
-        issues.append(f"model_type={meta['model_type']!r} (mlx-lm must implement it)")
     if not any((path / name).is_file() for name in TOKENIZER_FILES):
         issues.append(
             "No tokenizer assets found "

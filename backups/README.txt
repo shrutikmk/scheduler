@@ -1,8 +1,7 @@
-Habit Builder — file backups
+Habit Builder — optional disk copies
 
-When you click "Export backup" in samples/habit_builder.html, your browser downloads a JSON file.
-Save it here (scheduler/backups/) so it lives next to the project and survives clearing site data.
+Habit Builder keeps data in the browser (IndexedDB + localStorage) or, when served by the day-scheduler UI, in SQLite via the server API. The page no longer offers Export/Import backup buttons.
 
-Use "Import backup" to restore from any habit-builder-backup-*.json file.
+You may still store legacy habit-builder-backup-*.json files here yourself if you created them before that UI was removed.
 
 Tracked exports are not committed by default (see root .gitignore: backups/*.json).

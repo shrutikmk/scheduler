@@ -1,0 +1,309 @@
+/* Top navigation + layout shell for Scheduler and Finances (uses heartbeat_theme.css or day_scheduler vars). */
+
+html {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+body {
+  margin: 0;
+  font-family: inherit;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Planner-style date control (shared with app/day_scheduler.html). */
+.date-nav {
+  display: grid;
+  grid-template-columns: var(--date-nav-arrow-w) minmax(0, 1fr) var(--date-nav-arrow-w);
+  align-items: stretch;
+  gap: 0;
+  padding: 0.12rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--soft);
+  box-sizing: border-box;
+  width: min(24rem, 100%);
+  max-width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
+  position: relative;
+  --date-nav-arrow-w: 2.1rem;
+}
+
+.fin-date-nav.date-nav {
+  width: min(14rem, 100%);
+}
+
+.date-nav-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 0.12rem;
+}
+
+.date-nav-hidden-date {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.date-nav button.date-nav-arrow,
+.date-nav button.date-chip-pick {
+  font-family: inherit;
+}
+
+.date-nav button.date-nav-arrow {
+  min-height: 1.65rem;
+  padding: 0.24rem 0.52rem;
+  border-radius: 999px;
+  border: 1px solid var(--button-border);
+  background: var(--button-bg);
+  color: var(--button-text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.date-nav button.date-nav-arrow:hover {
+  background: var(--button-hover-bg);
+}
+
+.date-nav button.date-chip-pick {
+  border: none;
+  background: transparent;
+  padding: 0.18rem 0.35rem;
+  min-height: 0;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  display: block;
+  font: inherit;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.date-nav button.date-chip-pick:hover {
+  background: var(--button-hover-bg);
+  border-radius: 999px;
+}
+
+.date-chip {
+  padding: 0.18rem 0.55rem;
+  max-width: 12rem;
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.date-nav button.date-nav-arrow:focus-visible,
+.date-nav button.date-chip-pick:focus-visible {
+  outline: 2px solid var(--input-focus-border);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1180px) {
+  .date-chip {
+    max-width: 9.5rem;
+  }
+
+  .date-nav {
+    min-width: 0;
+    flex: 0 1 auto;
+    --date-nav-arrow-w: 2rem;
+  }
+}
+
+.app-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.app-frame > .grid {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.site-nav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-translucent);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-soft);
+  z-index: 20;
+}
+
+.site-nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  text-decoration: none;
+  color: var(--text);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-size: 1.05rem;
+  padding: 0.28rem 0.5rem;
+  margin: -0.28rem -0.5rem;
+  border-radius: 10px;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.site-nav-brand:hover {
+  background: var(--nav-link-hover-bg);
+}
+
+.site-nav-brand:focus-visible {
+  outline: 2px solid var(--input-focus-border);
+  outline-offset: 2px;
+}
+
+.site-nav-heart {
+  display: flex;
+  color: var(--accent-strong);
+  transition: color 0.18s ease, transform 0.18s ease;
+}
+
+.site-nav-brand:hover .site-nav-heart {
+  color: var(--accent);
+  transform: scale(1.06);
+}
+
+.site-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.site-nav-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--soft);
+}
+
+.site-nav-tab {
+  display: inline-block;
+  padding: 0.38rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.site-nav-tab:hover {
+  color: var(--text);
+  background: var(--nav-link-hover-bg);
+}
+
+.site-nav-tab:active {
+  transform: translateY(1px);
+}
+
+.site-nav-tab:focus-visible {
+  outline: 2px solid var(--input-focus-border);
+  outline-offset: 2px;
+}
+
+.site-nav-tab[aria-current="page"] {
+  color: var(--accent-strong);
+  background: var(--nav-tab-active-bg);
+  border-color: var(--nav-tab-active-border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+
+.site-nav .theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.14rem;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid var(--border);
+}
+
+.site-nav .theme-toggle button {
+  padding: 0.18rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.site-nav .theme-toggle button:hover {
+  color: var(--text);
+}
+
+.site-nav .theme-toggle button.active {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: var(--shadow-soft);
+}
+
+.site-nav .theme-toggle button:focus-visible {
+  outline: 2px solid var(--input-focus-border);
+  outline-offset: 2px;
+}
+
+/* Finances page shell */
+.fin-app-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top right, var(--bg-spot), transparent 32rem),
+    var(--bg);
+}
+
+.fin-app-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.25rem;
+  box-sizing: border-box;
+  color: var(--text);
+}

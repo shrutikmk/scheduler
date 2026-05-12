@@ -26,6 +26,29 @@ def test_collect_tasks_mixed_dates_and_default() -> None:
     assert rows[1].start_label == "5:00 PM"
 
 
+def test_collect_tasks_from_markdown_bullets() -> None:
+    text = "## Plan\n\n- **[11:05 AM]** - Errand — **0h55m**\n"
+    dates, rows = sp.collect_tasks_with_dates(text, default_plan_date="2026-05-09")
+    assert dates == ["2026-05-09"]
+    assert len(rows) == 1
+    assert rows[0].start_label == "11:05 AM"
+    assert rows[0].title == "Errand"
+    assert rows[0].duration_minutes == 55
+
+
+def test_collect_tasks_undated_bullets_follow_default_plan_date() -> None:
+    text = """╭──────────────────────────────────╮
+│           T O   D O              │
+╰──────────────────────────────────╯
+* [7:00 AM] - Breakfast - 0h30m
+"""
+    dates, rows = sp.collect_tasks_with_dates(text, default_plan_date="2026-05-10")
+    assert dates == ["2026-05-10"]
+    assert len(rows) == 1
+    assert rows[0].plan_date_iso == "2026-05-10"
+    assert rows[0].start_label == "7:00 AM"
+
+
 def test_infer_planner_date_hints_tomorrow_and_literal() -> None:
     out = sp.infer_planner_date_hints(
         "Prep for call tomorrow; also 2026-12-01 travel",
@@ -33,6 +56,15 @@ def test_infer_planner_date_hints_tomorrow_and_literal() -> None:
     )
     assert "2026-05-09" in out
     assert "2026-12-01" in out
+
+
+def test_planner_facts_machine_line_only_when_future_target() -> None:
+    today_only = sp.planner_facts_injection(
+        "tonight dinner only",
+        anchor_date_iso="2026-05-09",
+    )
+    assert today_only is not None
+    assert "Machine format" not in today_only
 
 
 def test_planner_facts_injection() -> None:
@@ -44,3 +76,4 @@ def test_planner_facts_injection() -> None:
     assert "2026-05-08" in block
     assert "2026-05-15" in block
     assert "YYYY-MM-DD" in block
+    assert "Machine format" in block

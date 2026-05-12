@@ -29,6 +29,24 @@ def test_start_label_sort_minutes_wall_clock_order() -> None:
     assert ordered == ["12:01 AM", "8:00 AM", "8:30 AM", "10:30 AM", "12:00 PM", "5:30 PM"]
 
 
+def test_start_label_sort_minutes_datetime_prefixed_labels() -> None:
+    labels = [
+        "2026-05-09 7:43 PM",
+        "2026-05-09 2:43 PM",
+        "2026-05-09 1:13 PM",
+        "2026-05-09 8:13 PM",
+        "2026-05-09 5:13 PM",
+    ]
+    ordered = sorted(labels, key=start_label_sort_minutes)
+    assert ordered == [
+        "2026-05-09 1:13 PM",
+        "2026-05-09 2:43 PM",
+        "2026-05-09 5:13 PM",
+        "2026-05-09 7:43 PM",
+        "2026-05-09 8:13 PM",
+    ]
+
+
 def test_list_schedule_tasks_ordered_by_wall_clock(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     rows = [
