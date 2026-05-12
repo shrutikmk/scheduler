@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local financial analytics UI: CSV upload to ``financial-data/``, charts, MLX insights.
+"""Local financial analytics UI: CSV upload to ``financial-data/``, charts, LLM-backed insights.
 
 **Two terminals**
 
@@ -10,7 +10,7 @@ per-line logs). Ledger and LLM hops also log as ``[fin_pipeline] …``.
 
 1. **LLM gateway (Metal)** — must expose ``POST /v1/plain-completion``::
 
-       uv run --group samples-mlx python app/mlx_llm_gateway.py
+       uv run --group samples-vllm python app/scheduler_llm_gateway.py
 
    One gateway process is enough: each completion may set JSON ``model``; the server loads
    **Qwen3-8B** and **Qwen3-14B** in separate bundles (per-model locks) so label batches and
@@ -20,7 +20,7 @@ per-line logs). Ledger and LLM hops also log as ``[fin_pipeline] …``.
 
        uv run python app/financial_analytics_ui.py
 
-   Prefer the unified shell: ``uv run python app/mlx_day_scheduler_ui.py`` (Finances at ``/finances``).
+   Prefer the unified shell: ``uv run python app/day_scheduler_web.py`` (Finances at ``/finances``).
 
 Set ``MLX_SCHEDULER_LLM_API`` if the gateway is not on
 ``http://127.0.0.1:8766``. On startup, if the ledger has debits still flagged for LLM titles
@@ -947,7 +947,7 @@ def financial_dispatch_post(handler: BaseHTTPRequestHandler, path: str) -> bool:
         financial_flow_log(
             insights_fid,
             f"insights digest ready mode={digest_ctx.get('mode')!r} "
-            f"user_block_chars={len(user_block)} — calling insights MLX model",
+            f"user_block_chars={len(user_block)} — calling insights model",
             lane="pipeline",
             role="insights",
             model=insights_model or None,
@@ -979,7 +979,10 @@ def financial_dispatch_post(handler: BaseHTTPRequestHandler, path: str) -> bool:
                     "error": "LLM gateway returned an error.",
                     "detail": detail[:800],
                     "upstream": origin,
-                    "hint": "Start: uv run --group samples-mlx python app/mlx_llm_gateway.py",
+                    "hint": (
+                        "Start: export VLLM_14B_BASE_URL=… then uv run --group samples-vllm "
+                        "python app/scheduler_llm_gateway.py"
+                    ),
                 },
             )
             return True
@@ -998,7 +1001,10 @@ def financial_dispatch_post(handler: BaseHTTPRequestHandler, path: str) -> bool:
                     "error": "Cannot reach LLM gateway.",
                     "detail": str(e),
                     "upstream": origin,
-                    "hint": "Start: uv run --group samples-mlx python app/mlx_llm_gateway.py",
+                    "hint": (
+                        "Start: export VLLM_14B_BASE_URL=… then uv run --group samples-vllm "
+                        "python app/scheduler_llm_gateway.py"
+                    ),
                 },
             )
             return True
@@ -1154,13 +1160,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--llm-origin",
         default=DEFAULT_LLM_ORIGIN,
-        help="MLX gateway base URL (default env MLX_SCHEDULER_LLM_API or http://127.0.0.1:8766).",
+        help="Scheduler LLM gateway base URL (default env MLX_SCHEDULER_LLM_API or http://127.0.0.1:8766).",
     )
     p.add_argument(
         "--financial-label-model",
         default=None,
         help=(
-            "MLX model for ledger titles/categories/mix labels "
+            "Model id for ledger titles/categories/mix labels "
             "(env MLX_FINANCIAL_LABEL_MODEL; default Qwen3-8B local or Hub)."
         ),
     )
@@ -1168,7 +1174,7 @@ def main(argv: list[str] | None = None) -> int:
         "--financial-insights-model",
         default=None,
         help=(
-            "MLX model for narrative insights "
+            "Model id for narrative insights "
             "(env MLX_FINANCIAL_INSIGHTS_MODEL; default Qwen3-14B local or Hub)."
         ),
     )

@@ -1,6 +1,6 @@
 """Structured query extraction for day-scheduler (JSON-only LLM parse).
 
-Pure helpers plus prompts for ``mlx_scheduler_llm_api``: no MLX imports here.
+Pure helpers plus prompts for ``scheduler_llm_http_handler``: no MLX imports here.
 """
 
 from __future__ import annotations
@@ -19,12 +19,20 @@ QUERY_PARSER_SYSTEM = (
     "mainly wants planned/updated, or JSON null if ambiguous, multi-day, not scheduling, "
     'or unclear.\n'
     '- "time_intent_summary": short English phrase (e.g. "no explicit times", "morning only", '
-    '"after 3pm", user-mentioned clocks).\n'
+    '"after 3pm", user-mentioned clocks). Capture **within-day WHEN** vagueness '
+    '("evening", fixed clock chips, "before noon") separately from picking the calendar day.\n'
     '- "estimated_event_count": non-negative integer estimate of distinct activities/events '
     "the user implied.\n"
     '- "count_disclaimer": one short sentence that this count is approximate and the final '
     "timetable may merge/split lines.\n"
-    "Resolve relative dates using the anchor date provided in the user block."
+    "**Relative calendar resolution:** Each user payload includes an anchor calendar date plus "
+    "local NOW. Interpret **today** / **tomorrow** / **tonight** / **day after tomorrow** / "
+    "**in X days** against that anchor (local timezone). Bare weekday (**Friday**, **on Sunday**) "
+    "= **nearest occurrence of that weekday ON OR AFTER the anchor date**, unless wording "
+    "clearly selects a past week (**last Friday**) or an explicit numeric date overrides. "
+    "**This weekend** / **next Monday** similarly—prefer the coherent next occurrence starting "
+    "from the anchor. Emit a concrete ISO for `primary_plan_date_iso` whenever one main day wins; "
+    "use JSON null only when spans are genuinely indeterminate."
 )
 
 DEFAULT_COUNT_DISCLAIMER = (
@@ -129,7 +137,11 @@ def parsed_query_from_dict(d: dict[str, Any]) -> ParsedQuery:
         est = None
 
     disc = d.get("count_disclaimer")
-    disclaimer = disc.strip() if isinstance(disc, str) and disc.strip() else DEFAULT_COUNT_DISCLAIMER
+    disclaimer = (
+        disc.strip()
+        if isinstance(disc, str) and disc.strip()
+        else DEFAULT_COUNT_DISCLAIMER
+    )
 
     return ParsedQuery(
         primary_plan_date_iso=primary,

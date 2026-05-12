@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mlx_day_scheduler_ui import augment_chat_payload
+from day_scheduler_web import augment_chat_payload
 from scheduler_store import (
     ScheduleRow,
     SchedulerStore,

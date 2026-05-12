@@ -13,7 +13,7 @@ _APP_ROOT = Path(__file__).resolve().parent
 if str(_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(_APP_ROOT))
 
-from mlx_day_scheduler_pipeline import strip_reasoning_blocks  # noqa: E402
+from day_scheduler_pipeline import strip_reasoning_blocks  # noqa: E402
 
 _LINE_ONLY_RE = re.compile(
     r"^\*\s*(?:\[(\d{4}-\d{2}-\d{2})\]\s+)?\[([^\]]+)\]\s*-\s*(.+?)\s*-\s*(\d+h\d+m)\s*$",

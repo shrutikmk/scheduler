@@ -1,4 +1,4 @@
-"""MLX model resolution for financial analytics (fast label model vs heavier insights)."""
+"""Model path resolution for financial analytics (labels vs insights)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _HUB_QWEN14 = "Qwen/Qwen3-14B"
 
 
 def resolve_financial_label_model(cli_or_env: str | None = None) -> str:
-    """Qwen3-8B for ledger titles, categories, and spending-mix bar labels.
+    """Ledger titles/categories/spend-mix labels model path or Hub id.
 
     Precedence: non-empty ``cli_or_env``, ``MLX_FINANCIAL_LABEL_MODEL``, local
     ``~/models/Qwen3-8B``, else Hugging Face ``Qwen/Qwen3-8B``.
@@ -29,7 +29,7 @@ def resolve_financial_label_model(cli_or_env: str | None = None) -> str:
 
 
 def resolve_scheduler_query_parser_model(cli_or_env: str | None = None) -> str:
-    """MLX snapshot for day-scheduler **query JSON** parsing (fast ~8B class).
+    """Default snapshot id for query JSON parsing (~8B class).
 
     Precedence: non-empty ``cli_or_env``, ``SCHEDULER_QUERY_PARSER_MODEL``, then the same
     default chain as :func:`resolve_financial_label_model` (local ``~/models/Qwen3-8B``,
@@ -44,7 +44,7 @@ def resolve_scheduler_query_parser_model(cli_or_env: str | None = None) -> str:
 
 
 def resolve_financial_insights_model(cli_or_env: str | None = None) -> str:
-    """Qwen3-14B for narrative insights only.
+    """Insights / narrative markdown model path or Hub id.
 
     Precedence: non-empty ``cli_or_env``, ``MLX_FINANCIAL_INSIGHTS_MODEL``, local
     ``~/models/Qwen3-14B``, else ``Qwen/Qwen3-14B``.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Thin **day-scheduler shell** HTTP server — static HTML + SQLite + MLX LLM gateway proxy.
+"""Thin **day-scheduler shell** HTTP server — static HTML + SQLite + LLM gateway proxy.
 
 Serves the **Heartbeat** product: **Scheduler** at ``/`` and **Finances** (analytics) at
 ``/finances`` on the same origin (default ``http://127.0.0.1:8765/``). Financial CSV APIs
@@ -9,11 +9,11 @@ under ``/api/files``, ``/api/summary``, ``/api/upload``, etc. share this process
 
 1. **LLM gateway (Metal):**
 
-       uv run --group samples-mlx python app/mlx_llm_gateway.py
+       uv run --group samples-vllm python app/scheduler_llm_gateway.py
 
 2. **This UI:**
 
-       uv run python app/mlx_day_scheduler_ui.py
+       uv run python app/day_scheduler_web.py
 
 Open ``http://127.0.0.1:8765/`` — scheduler REST under ``/api/*`` persists habits, tasks per
 calendar day, and conversation logs (SQLite ``SCHEDULER_DB`` or ``./data/scheduler.sqlite``).
@@ -168,14 +168,20 @@ def fetch_upstream_health(origin: str, *, timeout_sec: float = 3.0) -> tuple[boo
             "online": False,
             "upstream": origin,
             "detail": str(err),
-            "hint": ("Start the gateway: uv run --group samples-mlx python app/mlx_llm_gateway.py"),
+            "hint": (
+                "Start gateway: export VLLM_14B_BASE_URL=… then "
+                "uv run --group samples-vllm python app/scheduler_llm_gateway.py"
+            ),
         }
     except (TimeoutError, OSError, ValueError, json.JSONDecodeError) as e:
         return False, {
             "online": False,
             "upstream": origin,
             "detail": str(e),
-            "hint": ("Start the gateway: uv run --group samples-mlx python app/mlx_llm_gateway.py"),
+            "hint": (
+                "Start gateway: export VLLM_14B_BASE_URL=… then "
+                "uv run --group samples-vllm python app/scheduler_llm_gateway.py"
+            ),
         }
 
 
@@ -749,7 +755,7 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
             self._send_upstream_error_json(
                 503,
                 "LLM gateway offline — start: "
-                "uv run --group samples-mlx python app/mlx_llm_gateway.py",
+                "uv run --group samples-vllm python app/scheduler_llm_gateway.py",
             )
             return
 
@@ -782,7 +788,7 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
                 day_ui_flow_log(
                     chat_fid,
                     f"gateway stream started HTTP {resp.status} "
-                    f"X-Scheduler-Flow-ID={g_flow!r} (pairs with MLX terminal)",
+                    f"X-Scheduler-Flow-ID={g_flow!r} (pairs with gateway terminal)",
                     lane="gateway",
                     role="chat",
                     mlx="from_gateway_stream_open",
@@ -912,14 +918,16 @@ class ThreadedUiServer(ThreadingHTTPServer):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Day-scheduler web shell (SQLite + MLX LLM API).")
+    parser = argparse.ArgumentParser(
+        description="Day-scheduler web shell (SQLite + scheduler LLM gateway).",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
         "--llm-api",
         default=DEFAULT_UPSTREAM_LLM_API,
         help=(
-            "Base URL of mlx_llm_gateway.py (env MLX_SCHEDULER_LLM_API; "
+            "Base URL of scheduler_llm_gateway.py (env MLX_SCHEDULER_LLM_API; "
             "default http://127.0.0.1:8766)"
         ),
     )
@@ -951,12 +959,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--financial-label-model",
         default=None,
-        help="MLX model for ledger titles/categories (env MLX_FINANCIAL_LABEL_MODEL).",
+        help="Model id for ledger titles/categories (env MLX_FINANCIAL_LABEL_MODEL).",
     )
     parser.add_argument(
         "--financial-insights-model",
         default=None,
-        help="MLX model for financial insights (env MLX_FINANCIAL_INSIGHTS_MODEL).",
+        help="Model id for financial insights (env MLX_FINANCIAL_INSIGHTS_MODEL).",
     )
 
     ns = parser.parse_args(argv if argv is not None else sys.argv[1:])
@@ -1056,7 +1064,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"GCal poller        → every {ns.gcal_poll_sec:.0f}s", file=sys.stderr, flush=True)
     print(
-        "(start gateway: uv run --group samples-mlx python app/mlx_llm_gateway.py)\n",
+        "(start gateway: uv run --group samples-vllm python app/scheduler_llm_gateway.py)\n",
         file=sys.stderr,
         flush=True,
     )

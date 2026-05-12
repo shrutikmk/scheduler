@@ -911,7 +911,7 @@
               <button type="button" data-theme-mode="light" aria-label="Light theme">☀</button>
               <button type="button" data-theme-mode="dark" aria-label="Dark theme">☾</button>
             </div>
-            <span class="llm-pill muted" id="llm-status-pill" title="mlx_llm_gateway.py">LLM …</span>
+            <span class="llm-pill muted" id="llm-status-pill" title="scheduler_llm_gateway.py">LLM …</span>
             <span class="llm-pill muted" id="gcal-status-pill" title="Google Calendar sync">GCal …</span>
             <button type="button" id="gcal-action-btn" class="llm-pill sync-btn" hidden></button>
           </div>
@@ -1116,7 +1116,7 @@
         llmPill.textContent = "LLM API online" + loaded;
       } else {
         llmPill.classList.add("offline");
-        llmPill.textContent = "Offline — uv run mlx_llm_gateway.py";
+        llmPill.textContent = "Offline — set VLLM_14B_BASE_URL and run scheduler_llm_gateway.py";
       }
       llmPill.title =
         typeof j.detail === "string"
@@ -2747,7 +2747,7 @@
     if (!raw) return;
     if (!llmOnline) {
       statusEl.textContent =
-        "LLM API offline — run: uv run --group samples-mlx python app/mlx_llm_gateway.py";
+        "LLM API offline — set VLLM_14B_BASE_URL and run scheduler_llm_gateway.py (samples-vllm)";
       return;
     }
     if (requestInFlight) {

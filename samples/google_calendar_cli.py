@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""MLX chat CLI that drafts **Google Calendar** events via a local LLM, then pushes with OAuth.
+"""Chat CLI: draft **Google Calendar** events via **vLLM** (OpenAI API), then OAuth push.
 
-Model loading follows ``samples/mlx_chat_cli.py``. **Defaults for this CLI** prefer **Qwen3-14B**
-(``~/models/Qwen3-14B``, else Hugging Face ``Qwen/Qwen3-14B``) unless you pass ``--model`` or use
-the env vars below. The model must emit a fenced ``json`` block with ``events[]``.
+**Defaults** prefer **Qwen3-14B** (``~/models/Qwen3-14B``, else Hugging Face ``Qwen/Qwen3-14B``) for
+tokenizer context unless you pass ``--model``. Inference uses ``VLLM_14B_BASE_URL``.
+The model must emit a fenced ``json`` block with ``events[]``.
 
 OAuth (one-time browser flow):
 
@@ -15,15 +15,11 @@ OAuth (one-time browser flow):
 
 Examples::
 
-    uv sync --group samples-mlx --group samples-google-calendar
-    uv run --group samples-mlx --group samples-google-calendar \\
-        python samples/mlx_google_calendar_cli.py \\
+    export VLLM_14B_BASE_URL=http://127.0.0.1:8000/v1
+    uv sync --group samples-vllm --group samples-google-calendar
+    uv run --group samples-vllm --group samples-google-calendar \\
+        python samples/google_calendar_cli.py \\
         --client-secrets /path/to/desktop-oauth-secret.json
-
-    # Terminal 1: optionally use MLX LLM elsewhere; here we load Metal in-process::
-
-    uv run --group samples-mlx --group samples-google-calendar \\
-        python samples/mlx_google_calendar_cli.py
 
 Commands in chat::
 
@@ -63,21 +59,27 @@ for _p in (SAMPLES_ROOT, APP_ROOT):
     if _p.is_dir() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-# noqa: E402 — preserve chat CLI import ordering like mlx_chat_cli.py
-from mlx_chat_cli import (  # noqa: E402
-    _encoded_length,
+from local_model_hints import (  # noqa: E402
+    diagnose_local_snapshot as _diagnose_local,
+    is_local_dir as _is_local_dir,
     resolve_context_token_limit,
-    resolve_model_arg,
 )
-from mlx_chat_cli import diagnose_local_snapshot as _diagnose_local  # noqa: E402
-from mlx_chat_cli import is_local_dir as _is_local_dir  # noqa: E402
-from mlx_chat_cli import run_diagnose as _run_diagnose  # noqa: E402
-from mlx_day_scheduler_pipeline import REPO_ROOT, compress_history_for_budget, trim_history_pairs  # noqa: E402
-from mlx_day_scheduler_pipeline import (  # noqa: E402
+from day_scheduler_pipeline import (  # noqa: E402
+    REPO_ROOT,
+    _encoded_length,
     _minutes_to_ampm,
 )
-from mlx_day_scheduler_pipeline import build_prompt as _build_prompt  # noqa: E402
-from mlx_day_scheduler_pipeline import strip_reasoning_blocks as _strip_reasoning_blocks  # noqa: E402
+from day_scheduler_pipeline import (  # noqa: E402
+    compress_history_for_budget_vllm,
+    strip_reasoning_blocks as _strip_reasoning_blocks,
+    trim_history_pairs,
+)
+from vllm_gateway_routing import (  # noqa: E402
+    diagnose_vllm_metal_server,
+    probe_vllm_route,
+    vllm_route_from_env,
+)
+from vllm_openai_client import chat_completion_stream  # noqa: E402
 from airport_timezones import AirportTzTurn, airport_tz_turn  # noqa: E402
 from google_calendar_client import default_calendar_oauth_client_secrets_path  # noqa: E402
 from google_calendar_payload import extract_calendar_payload  # noqa: E402
@@ -89,18 +91,18 @@ _LOCAL_QWEN14 = Path("models") / "Qwen3-14B"
 
 
 def resolve_calendar_cli_model(cli_model: str | None) -> str:
-    """Resolve MLX weights for Calendar chat (not generic ``mlx_chat_cli`` defaults).
+    """Resolve tokenizer id / bookkeeping path for Calendar chat context.
 
     Precedence: ``--model``, ``MLX_MODEL``, ``MLX_CALENDAR_MODEL``, local ``~/models/Qwen3-14B`` if
     present, else Hugging Face ``Qwen/Qwen3-14B``.
     """
     if cli_model and cli_model.strip():
-        return resolve_model_arg(cli_model)
+        return cli_model.strip()
     if (os.environ.get("MLX_MODEL") or "").strip():
-        return resolve_model_arg(None)
+        return os.environ.get("MLX_MODEL", "").strip()
     cal = (os.environ.get("MLX_CALENDAR_MODEL") or "").strip()
     if cal:
-        return resolve_model_arg(cal)
+        return cal
     local14 = (Path.home() / _LOCAL_QWEN14).expanduser().resolve()
     if local14.is_dir():
         return str(local14)
@@ -294,25 +296,19 @@ def push_events_to_calendar(
 def main(argv: list[str] | None = None) -> int:
     _default_secrets = default_calendar_oauth_client_secrets_path(REPO_ROOT)
     parser = argparse.ArgumentParser(
-        description="MLX-backed chat that drafts Calendar events (JSON), then pushes with /push.",
+        description="vLLM-backed chat that drafts Calendar events (JSON), then pushes with /push.",
     )
     parser.add_argument(
         "--model",
         default=None,
         help=(
-            "mlx-lm model dir or HF id. Precedence: this flag, MLX_MODEL, MLX_CALENDAR_MODEL, "
-            f"then ~/models/Qwen3-14B if present, else Hub {_CAL_DEFAULT_HUB}."
+            "Tokenizer / context id (HF or local snapshot). Precedence: this flag, MLX_MODEL, "
+            f"MLX_CALENDAR_MODEL, then ~/models/Qwen3-14B if present, else Hub {_CAL_DEFAULT_HUB}."
         ),
     )
     parser.add_argument("--max-tokens", type=int, default=2048, help="Completion cap.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature.")
     parser.add_argument("--top-p", dest="top_p", type=float, default=1.0, help="Nucleus sampling.")
-    parser.add_argument(
-        "--top-k", dest="top_k", type=int, default=20, help="Top-k sampling (0 disables)."
-    )
-    parser.add_argument("--min-p", dest="min_p", type=float, default=0.0, help="Min-p sampling.")
-    parser.add_argument("--prefill-step-size", type=int, default=4096, help="Prefill chunk size.")
-    parser.add_argument("--kv-bits", type=int, default=8, help="KV cache bits (0 = off).")
     parser.add_argument(
         "--calendar-id",
         default=None,
@@ -335,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--diagnose",
         action="store_true",
-        help="MLX environment check (no OAuth, no chat).",
+        help="vLLM + tokenizer probe (no OAuth, no chat).",
     )
     parser.add_argument(
         "--no-airport-tz-hints",
@@ -351,7 +347,26 @@ def main(argv: list[str] | None = None) -> int:
 
     model_str = resolve_calendar_cli_model(ns.model)
     if ns.diagnose:
-        return _run_diagnose(model_str)
+        vr = vllm_route_from_env()
+        if vr is None:
+            print(
+                "error: VLLM_14B_BASE_URL required for diagnose",
+                file=sys.stderr,
+            )
+            return 2
+        import httpx
+
+        with httpx.Client() as client:
+            rc = diagnose_vllm_metal_server(client, vr)
+        try:
+            from scheduler_tokenizer import load_tokenizer_only
+
+            load_tokenizer_only(model_str)
+            print(f"tokenizer ok: {model_str!r}", file=sys.stderr, flush=True)
+        except Exception as exc:
+            print(f"tokenizer check failed: {exc}", file=sys.stderr, flush=True)
+            return 3 if rc == 0 else rc
+        return rc
 
     default_secrets = _default_secrets
     client_path = Path(
@@ -415,23 +430,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-    try:
-        import mlx.core as mx
-        from mlx_lm import load
-        from mlx_lm.generate import stream_generate
-        from mlx_lm.sample_utils import make_sampler
-    except ImportError as e:
-        print(f"error: {e}\nInstall: uv sync --group samples-mlx", file=sys.stderr)
-        return 2
-
-    if not mx.metal.is_available():
-        print(
-            "error: MLX Metal unavailable. Run on Apple Silicon desktop session.",
-            file=sys.stderr,
-        )
-        return 2
-
-    if _is_local_dir(model_str):
         issues = _diagnose_local(Path(model_str).expanduser().resolve())
         hard_block = [
             x
@@ -461,31 +459,29 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
 
-    print(f"Loading {model_str!r} (Metal) …", file=sys.stderr)
-    try:
-        model_m, tokenizer = load(
-            model_str,
-            tokenizer_config={"trust_remote_code": True},
+    vr = vllm_route_from_env()
+    if vr is None:
+        print(
+            "error: VLLM_14B_BASE_URL not set (need vLLM OpenAI base URL, e.g. http://127.0.0.1:8000/v1)",
+            file=sys.stderr,
         )
-    except Exception as e:
-        print(f"\nLoad failed: {e}\n", file=sys.stderr)
-        return 4
+        return 2
+    import httpx
 
-    mx.clear_cache()
-    sampler = make_sampler(
-        temp=ns.temperature,
-        top_p=ns.top_p,
-        min_p=ns.min_p,
-        top_k=ns.top_k,
-    )
-    gen_kw: dict[str, Any] = {
-        "sampler": sampler,
-        "prefill_step_size": ns.prefill_step_size,
-    }
-    if ns.kv_bits > 0:
-        gen_kw["kv_bits"] = ns.kv_bits
-        gen_kw["kv_group_size"] = 64
-        gen_kw["quantized_kv_start"] = 0
+    llm_client = httpx.Client()
+    if not probe_vllm_route(llm_client, vr):
+        print(f"error: vLLM unreachable at {vr.api_base!r}", file=sys.stderr)
+        llm_client.close()
+        return 2
+
+    try:
+        from scheduler_tokenizer import load_tokenizer_only
+
+        tokenizer = load_tokenizer_only(model_str)
+    except Exception as e:
+        print(f"tokenizer load failed: {e}", file=sys.stderr)
+        llm_client.close()
+        return 4
 
     ctx_limit = resolve_context_token_limit(model_str=model_str, tokenizer=tokenizer, explicit=None)
     soft_frac = 0.72
@@ -493,8 +489,9 @@ def main(argv: list[str] | None = None) -> int:
 
     history: list[tuple[Role, str]] = []
     print(
-        "Google Calendar MLX chat. Commands: /paste /push /calendar /auth /clear /quit\n"
-        f"model={model_str}\n"
+        "Google Calendar chat (vLLM). Commands: /paste /push /calendar /auth /clear /quit\n"
+        f"context_tokenizer={model_str}\n"
+        f"vLLM model={vr.served_model_name!r} @ {vr.api_base}\n"
         f"calendar_default={cal_default!r}; OAuth secrets={client_path}\n"
         f"(Startup Calendar probe ran with probe={'on' if probe_at_startup else 'off'}; "
         "/calendar always probes HTTPS when possible.)\n",
@@ -614,8 +611,9 @@ def main(argv: list[str] | None = None) -> int:
         system_this_turn = system_base + calendar_clock_system_suffix()
 
         ctx_verbose = False
-        did_compress, p_tokens, budget = compress_history_for_budget(
-            model_m=model_m,
+        did_compress, p_tokens, budget = compress_history_for_budget_vllm(
+            client=llm_client,
+            route=vr,
             tokenizer=tokenizer,
             system=system_this_turn,
             history=history,
@@ -626,9 +624,10 @@ def main(argv: list[str] | None = None) -> int:
             keep_recent_messages=12,
             summarize_max_tokens=384,
             max_summarize_input_tokens=6144,
-            gen_kw=gen_kw,
             auto_summarize=True,
             enable_thinking=False,
+            summarize_temperature=float(ns.temperature),
+            summarize_top_p=float(ns.top_p),
         )
         if did_compress and ctx_verbose:
             print(f"[context] ~{p_tokens} tok budget ~{budget}", file=sys.stderr)
@@ -642,27 +641,29 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
-        prompt = _build_prompt(
-            tokenizer,
-            system_this_turn,
-            history + [("user", user_for_prompt)],
-            enable_thinking=False,
-        )
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_this_turn},
+            *[{"role": str(r), "content": str(t)} for r, t in history],
+            {"role": "user", "content": user_for_prompt},
+        ]
         print("AI> ", end="", flush=True)
         buf_parts: list[str] = []
-        last_resp = None
         gen_ok = False
+        out_chars = 0
         try:
-            for resp in stream_generate(
-                model_m,
-                tokenizer,
-                prompt,
-                max_tokens=ns.max_tokens,
-                **gen_kw,
+            for piece in chat_completion_stream(
+                llm_client,
+                api_base=vr.api_base,
+                model=vr.served_model_name,
+                messages=messages,
+                temperature=float(ns.temperature),
+                top_p=float(ns.top_p),
+                max_tokens=int(ns.max_tokens),
+                enable_thinking=False,
             ):
-                last_resp = resp
-                buf_parts.append(resp.text)
-                print(resp.text, end="", flush=True)
+                buf_parts.append(piece)
+                print(piece, end="", flush=True)
+                out_chars += len(piece)
             gen_ok = True
         except KeyboardInterrupt:
             print("\n", flush=True)
@@ -695,12 +696,9 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print("(no fenced JSON payload yet; clarify times or ask assistant to summarize)")
 
-            if (
-                last_resp is not None
-                and getattr(last_resp, "generation_tokens", 0) >= ns.max_tokens - 1
-            ):
+            if out_chars >= int(ns.max_tokens) * 3:
                 print(
-                    f"[hint] Hit --max-tokens ({ns.max_tokens}); output may be truncated.\n",
+                    f"[hint] Long output (--max-tokens={ns.max_tokens}); may be truncated.\n",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -708,6 +706,9 @@ def main(argv: list[str] | None = None) -> int:
         history.append(("user", raw_user))
         history.append(("assistant", reply))
         trim_history_pairs(history, 0)
+
+    llm_client.close()
+    return 0
 
 
 if __name__ == "__main__":

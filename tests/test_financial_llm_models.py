@@ -1,4 +1,4 @@
-"""Tests for financial UI MLX model resolution (8B labels vs 14B insights)."""
+"""Financial model path resolution helpers."""
 
 from __future__ import annotations
 

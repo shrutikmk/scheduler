@@ -1,4 +1,4 @@
-"""Google Calendar OAuth + minimal REST inserts (used by mlx_google_calendar_cli)."""
+"""Google Calendar OAuth + minimal REST inserts (used by google_calendar_cli)."""
 
 from __future__ import annotations
 

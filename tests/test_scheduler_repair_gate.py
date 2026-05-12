@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mlx_scheduler_llm_api import _only_format_repairable_validation_reasons
+from scheduler_llm_http_handler import _only_format_repairable_validation_reasons
 
 
 def test_format_repair_gate_allows_parser_only_failures() -> None:

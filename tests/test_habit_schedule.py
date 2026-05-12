@@ -3,15 +3,15 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import habit_schedule as habit_schedule
+from day_scheduler_web import augment_chat_payload
 from habit_schedule import (
-    habits_snapshot_with_required_rows,
     _phase2_status_for_target,
+    habits_snapshot_with_required_rows,
     latest_phase1_deadline_iso,
     non_required_habits_context_block,
     required_habits_context_block,
     required_habits_for_date,
 )
-from mlx_day_scheduler_ui import augment_chat_payload
 from scheduler_store import SchedulerStore
 
 

@@ -31,19 +31,27 @@ Here:
 
 
 def test_parse_invalid_primary_date_becomes_none() -> None:
-    raw = '{"primary_plan_date_iso": "not-a-date", "time_intent_summary": "x", "estimated_event_count": 1, "count_disclaimer": "d"}'
+    raw = (
+        '{"primary_plan_date_iso": "not-a-date", '
+        '"time_intent_summary": "x", "estimated_event_count": 1, '
+        '"count_disclaimer": "d"}'
+    )
     p = qp.parse_query_parser_completion_text(raw)
     assert p.primary_plan_date_iso is None
 
 
 def test_resolve_import_default_plan_date_prefers_parser() -> None:
     p = qp.ParsedQuery(primary_plan_date_iso="2026-05-10")
-    assert qp.resolve_import_default_plan_date(p, client_clock_date_iso="2026-05-09") == "2026-05-10"
+    assert qp.resolve_import_default_plan_date(p, client_clock_date_iso="2026-05-09") == (
+        "2026-05-10"
+    )
 
 
 def test_resolve_import_default_plan_date_fallback_anchor() -> None:
     p = qp.ParsedQuery(primary_plan_date_iso=None)
-    assert qp.resolve_import_default_plan_date(p, client_clock_date_iso="2026-05-09") == "2026-05-09"
+    assert qp.resolve_import_default_plan_date(p, client_clock_date_iso="2026-05-09") == (
+        "2026-05-09"
+    )
 
 
 def test_format_query_parser_host_facts() -> None:

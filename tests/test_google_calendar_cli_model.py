@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import mlx_google_calendar_cli as cal
+import google_calendar_cli as cal
 
 
 def test_explicit_model_wins() -> None:

@@ -49,7 +49,7 @@ def vllm_route_from_env() -> VllmRoute | None:
 def scheduler_vllm_openai_model_id() -> str | None:
     """OpenAI ``model`` id when ``VLLM_14B_BASE_URL`` is set; else ``None``.
 
-    Financial and other **clients** may still pass MLX paths (e.g. Qwen3-8B) in
+    Financial and other **clients** may pass local paths (e.g. Qwen3-8B) in
     ``plain-completion`` JSON for bookkeeping; the vLLM gateway runs this id instead.
     """
     b14 = _env("VLLM_14B_BASE_URL")
@@ -71,7 +71,7 @@ def scheduler_inference_log_model(
 
     When the gateway process has ``VLLM_*`` set but this process does not (separate terminal),
     falls back to ``GET {origin}/health`` and reads ``vllm_model`` if ``backend`` is ``vllm``.
-    Otherwise uses ``client_model`` (e.g. MLX path for label jobs).
+    Otherwise uses ``client_model`` (e.g. local path hint for label jobs).
     """
     env_id = scheduler_vllm_openai_model_id()
     if env_id:

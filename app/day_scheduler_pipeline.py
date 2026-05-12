@@ -1,4 +1,4 @@
-"""Shared MLX **day-scheduler** prompting, context compression, and generation.
+"""Shared **day-scheduler** prompting, context compression, and vLLM-backed generation helpers.
 
 CLI and HTTP UI import this module so inference behavior stays aligned.
 """
@@ -78,20 +78,15 @@ def _day_scheduler_clock_suffix(
     tz_blk = _iana_context_lines(client_timezone_iana=client_timezone_iana)
     return (
         "\n\n---\n[Clock — local machine]\n"
-        "Use **only** this timestamp as “right now” for scheduling "
-        "(ignore model training-time priors about dates or times).\n"
-        f"Local wall time for **this** prompt: **{floor}** on **{clock_date.isoformat()}**.\n"
+        f"MIRROR CLOCK: **{floor}** on **{clock_date.isoformat()}**. "
+        "Same **NOW** as `[Hard clock — this turn]` in the user payload—prioritize "
+        "that pair for rebuilding start times vs older assistant wording.\n"
         f"{tz_blk}"
-        "Google Calendar **task** events from this app are written with `start`/`end` "
-        "`timeZone` = UI-reported zone when the user has synced (else host zone), plus private "
-        "metadata echoing that zone and the host zone for debugging.\n"
-        "Schedule forward from this instant through the rest of the day.\n"
-        f"Hard rule: each `* [time] - …` line must use a start time **at or after {floor}**. "
-        "Rebuild from this NOW; earlier times in past assistant messages are stale—"
-        "do not copy them.\n"
-        "**Outstanding work:** keep **every** obligation from your last plan that the user did "
-        "**not** explicitly say they finished. Slide tasks forward—do **not** drop them just "
-        "because time moved.\n"
+        "Google Calendar **task** rows use UI-reported `timeZone` when the user has synced "
+        "(else host zone); importer normalizes timetable rows to canonical `*` bullets.\n"
+        "**Outstanding work:** keep obligations from your last plan unless the user clearly "
+        "finished **each one** explicitly—slide forward; **do not** drop undone rows "
+        "just because NOW moved.\n"
     )
 
 
@@ -585,7 +580,10 @@ def prepare_day_scheduler_user_for_prompt(
             "consistent with local NOW in the clock block (every line starts at or after "
             f"NOW). For **this** reply, local NOW is {floor} on "
             f"{clock_d.isoformat()}.\n"
-            "Output only the full refreshed stylized TO DO banner plus bullets."
+            "Output only the refreshed timetable: follow the opener contract (Markdown `#`/`##`, "
+            "or fenced ```schedule`/```plan opener, or legacy `╭…` banner), timetable bullets "
+            "(Markdown list bullets OK—the importer canonicalizes rows), "
+            "and a short closing paragraph."
         )
 
     fact_sheet = _day_scheduler_user_fact_sheet(user_visible)
@@ -614,324 +612,6 @@ def prepare_day_scheduler_user_for_prompt(
         + user_for_prompt
     )
     return user_for_prompt, wall_minutes, clock_d
-
-
-def _generate_plain_completion(
-    *,
-    model_m: Any,
-    tokenizer: Any,
-    prompt: str,
-    max_tokens: int,
-    gen_kw: dict[str, Any],
-) -> str:
-    from mlx_lm.generate import stream_generate
-
-    parts: list[str] = []
-    for resp in stream_generate(
-        model_m,
-        tokenizer,
-        prompt,
-        max_tokens=max_tokens,
-        **gen_kw,
-    ):
-        parts.append(resp.text)
-    return "".join(parts).strip()
-
-
-def compress_history_for_budget(
-    *,
-    model_m: Any,
-    tokenizer: Any,
-    system: str,
-    history: list[tuple[Role, str]],
-    pending_user: str,
-    context_limit: int,
-    soft_fraction: float,
-    reserve_tokens: int,
-    keep_recent_messages: int,
-    summarize_max_tokens: int,
-    max_summarize_input_tokens: int,
-    gen_kw: dict[str, Any],
-    auto_summarize: bool,
-    enable_thinking: bool | None = None,
-) -> tuple[bool, int, int]:
-    """Shrink ``history`` so the next prompt fits the soft token budget."""
-
-    summarizer_system = (
-        "You compress chat transcripts for ongoing context. Output a concise summary only: "
-        "key facts, decisions, names, commitments, and open questions. "
-        "No greeting or preamble."
-    )
-
-    budget = max(256, int(context_limit * soft_fraction) - max(0, reserve_tokens))
-
-    if context_limit <= 0 or soft_fraction <= 0:
-        return (
-            False,
-            prompt_token_count(
-                tokenizer,
-                system,
-                history + [("user", pending_user)],
-                enable_thinking=enable_thinking,
-            ),
-            budget,
-        )
-
-    target_pairs = history + [("user", pending_user)]
-    ntok = prompt_token_count(tokenizer, system, target_pairs, enable_thinking=enable_thinking)
-    if ntok <= budget:
-        return False, ntok, budget
-
-    mutated = False
-
-    cap_in = max(512, min(max_summarize_input_tokens, budget))
-
-    guard = 0
-    while ntok > budget and guard < 24:
-        guard += 1
-        if len(history) <= keep_recent_messages:
-            if not history:
-                break
-            if auto_summarize:
-                drop_n = max(1, len(history) // 4) if len(history) >= 4 else 1
-                del history[:drop_n]
-                mutated = True
-            else:
-                history.pop(0)
-                mutated = True
-            ntok = prompt_token_count(
-                tokenizer,
-                system,
-                history + [("user", pending_user)],
-                enable_thinking=enable_thinking,
-            )
-            continue
-
-        prefix_len = len(history) - keep_recent_messages
-        prefix = history[:prefix_len]
-        tail = history[prefix_len:]
-        if auto_summarize and prefix:
-            try:
-                transcript_lines = [f"{role.upper()}: {text}" for role, text in prefix]
-                while len(transcript_lines) > 2 and _encoded_length(
-                    tokenizer,
-                    "\n".join(transcript_lines),
-                ) > cap_in:
-                    transcript_lines = transcript_lines[max(1, len(transcript_lines) // 8) :]
-
-                transcript = "\n".join(transcript_lines)
-                summ_user = (
-                    "Summarize this conversation excerpt for memory.\n\n"
-                    + transcript
-                )
-                summ_prompt = build_prompt(
-                    tokenizer,
-                    summarizer_system,
-                    [("user", summ_user)],
-                    enable_thinking=enable_thinking,
-                )
-                summary = _generate_plain_completion(
-                    model_m=model_m,
-                    tokenizer=tokenizer,
-                    prompt=summ_prompt,
-                    max_tokens=summarize_max_tokens,
-                    gen_kw=gen_kw,
-                )
-                if not summary:
-                    summary = "(Earlier turns omitted — summary unavailable.)"
-                marker = "[Earlier conversation — summarized]\n"
-                history[:] = [
-                    ("user", marker + summary),
-                    (
-                        "assistant",
-                        "Understood; continuing with the recent messages below.",
-                    ),
-                ] + tail
-                mutated = True
-            except Exception:
-                history[:] = tail
-                mutated = True
-        else:
-            history[:] = tail
-            mutated = True
-
-        ntok = prompt_token_count(
-            tokenizer,
-            system,
-            history + [("user", pending_user)],
-            enable_thinking=enable_thinking,
-        )
-
-    return mutated, ntok, budget
-
-
-def generate_day_scheduler_reply(
-    *,
-    user_raw: str,
-    history: list[tuple[Role, str]],
-    model_m: Any,
-    tokenizer: Any,
-    base_system_prompt: str,
-    template_enable_thinking: bool | None,
-    context_limit: int,
-    soft_fraction: float,
-    reserve_tokens: int,
-    keep_recent_messages: int,
-    summarize_max_tokens: int,
-    max_summarize_input_tokens: int,
-    gen_kw: dict[str, Any],
-    auto_summarize: bool,
-    max_tokens: int,
-    strip_reasoning: bool,
-    buffer_full_reply: bool,
-    max_history_messages: int,
-    host_context: str | None = None,
-    client_clock_minutes: int | None = None,
-    client_clock_date: date | None = None,
-    client_timezone_iana: str | None = None,
-    on_stream_chunk: Callable[[str], None] | None = None,
-    on_stream_thinking: Callable[[str], None] | None = None,
-    on_thinking_closed: Callable[[], None] | None = None,
-    hide_schedule_deltas: bool = False,
-    on_compress: Callable[[bool, int, int], None] | None = None,
-) -> tuple[bool, str, Any | None]:
-    """Run one day-scheduler turn; mutates ``history``.
-
-    Returns ``(ok, assistant_text, last_resp)``.
-    """
-    user_for_prompt, clock_minutes, clock_date = prepare_day_scheduler_user_for_prompt(
-        user_raw,
-        host_context=host_context,
-        clock_minutes=client_clock_minutes,
-        clock_date=client_clock_date,
-        client_timezone_iana=client_timezone_iana,
-    )
-    clock_suffix = _day_scheduler_clock_suffix(
-        clock_minutes=clock_minutes,
-        clock_date=clock_date,
-        client_timezone_iana=client_timezone_iana,
-    )
-    effective_system = base_system_prompt + clock_suffix
-
-    did_compress, p_tokens, budget = compress_history_for_budget(
-        model_m=model_m,
-        tokenizer=tokenizer,
-        system=effective_system,
-        history=history,
-        pending_user=user_for_prompt,
-        context_limit=context_limit,
-        soft_fraction=soft_fraction,
-        reserve_tokens=reserve_tokens,
-        keep_recent_messages=keep_recent_messages,
-        summarize_max_tokens=summarize_max_tokens,
-        max_summarize_input_tokens=max_summarize_input_tokens,
-        gen_kw=gen_kw,
-        auto_summarize=auto_summarize,
-        enable_thinking=template_enable_thinking,
-    )
-    if on_compress is not None:
-        on_compress(did_compress, p_tokens, budget)
-
-    prompt = build_prompt(
-        tokenizer,
-        effective_system,
-        history + [("user", user_for_prompt)],
-        enable_thinking=template_enable_thinking,
-    )
-
-    from mlx_lm.generate import stream_generate
-
-    stream_schedule = not buffer_full_reply
-    ds_stream_strip = stream_schedule and strip_reasoning
-    ds_stream_raw = stream_schedule and not strip_reasoning
-    stream_tokens_live = ds_stream_raw
-    stream_dual_reasoning = (
-        stream_schedule
-        and not strip_reasoning
-        and on_stream_thinking is not None
-    )
-
-    buf: list[str] = []
-    last_resp: Any | None = None
-    gen_ok = False
-    think_splitter = ThinkBlockStreamSplitter() if ds_stream_strip else None
-    think_dual = ThinkDualStreamSplitter() if stream_dual_reasoning else None
-    public_splitter = (
-        AssistantPublicStreamSplitter()
-        if stream_schedule and hide_schedule_deltas and on_stream_chunk is not None
-        else None
-    )
-
-    def _route_public_assistant(stream_piece: str) -> None:
-        if not stream_piece or on_stream_chunk is None:
-            return
-        if public_splitter is not None:
-            chunk = public_splitter.feed(stream_piece)
-            if not chunk:
-                return
-            on_stream_chunk(normalize_scheduler_terminal_escapes(chunk))
-            return
-        on_stream_chunk(normalize_scheduler_terminal_escapes(stream_piece))
-
-    try:
-        for resp in stream_generate(
-            model_m,
-            tokenizer,
-            prompt,
-            max_tokens=max_tokens,
-            **gen_kw,
-        ):
-            last_resp = resp
-            buf.append(resp.text)
-            if think_dual is not None:
-                t_piece, a_piece, think_closed_here = think_dual.feed(resp.text)
-                if think_closed_here and on_thinking_closed is not None:
-                    on_thinking_closed()
-                if t_piece and on_stream_thinking is not None:
-                    on_stream_thinking(normalize_scheduler_terminal_escapes(t_piece))
-                _route_public_assistant(a_piece)
-            elif think_splitter is not None:
-                piece = think_splitter.feed(resp.text)
-                _route_public_assistant(piece)
-            elif stream_tokens_live and on_stream_chunk is not None:
-                _route_public_assistant(resp.text)
-        gen_ok = True
-    except Exception as e:
-        print(f"\nerror: {e}", file=sys.stderr)
-        return False, "", last_resp
-
-    reply = "".join(buf)
-    if strip_reasoning:
-        reply = strip_reasoning_blocks(reply)
-    if gen_ok:
-        reply = normalize_scheduler_terminal_escapes(reply)
-    if think_dual is not None:
-        t_tail, a_tail = think_dual.flush()
-        if t_tail and on_stream_thinking is not None:
-            on_stream_thinking(normalize_scheduler_terminal_escapes(t_tail))
-        _route_public_assistant(a_tail)
-    elif think_splitter is not None:
-        tail = think_splitter.flush()
-        _route_public_assistant(tail)
-
-    if public_splitter is not None and on_stream_chunk is not None:
-        pub_tail = public_splitter.flush()
-        if pub_tail:
-            on_stream_chunk(normalize_scheduler_terminal_escapes(pub_tail))
-
-    streamed = (
-        stream_tokens_live
-        or think_splitter is not None
-        or think_dual is not None
-    )
-    if not streamed and on_stream_chunk is not None:
-        full = normalize_scheduler_terminal_escapes(reply) if gen_ok else reply
-        on_stream_chunk(full)
-
-    history.append(("user", user_raw))
-    history.append(("assistant", reply))
-    trim_history_pairs(history, max_history_messages)
-    return gen_ok, reply, last_resp
 
 
 def compress_history_for_budget_vllm(
@@ -1261,6 +941,7 @@ def load_day_scheduler_system_prompt(repo_root: Path | None = None) -> str:
     except OSError:
         return (
             "You are a helpful assistant. Answer briefly unless the user needs detail.\n\n"
-            "Also act as a day scheduler; output a stylized TO DO banner then bullets as "
-            "[time] - title - XhYm using the host local clock only."
+            "Also act as a day scheduler using the host injections for local NOW: output a Markdown "
+            "heading (`#`/`##`) or fenced ```schedule` opener—or legacy ╭ timetable frame—and "
+            "bullets `[time] - title - XhYm` per the product rules."
         )

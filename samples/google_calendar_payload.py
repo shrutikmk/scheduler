@@ -1,4 +1,4 @@
-"""Parse assistant replies into Calendar API-ready event payloads (no MLX / OAuth)."""
+"""Parse assistant replies into Calendar API-ready event payloads (OAuth free)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any, cast
 
-from mlx_day_scheduler_pipeline import strip_reasoning_blocks
+from day_scheduler_pipeline import strip_reasoning_blocks
 
 _CODE_FENCE_JSON = re.compile(
     r"```(?:json)?\s*([\s\S]*?)```",

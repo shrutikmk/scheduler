@@ -5,12 +5,12 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import patch
 
-from mlx_day_scheduler_pipeline import prepare_day_scheduler_user_for_prompt
+from day_scheduler_pipeline import prepare_day_scheduler_user_for_prompt
 
 
 def test_prompt_includes_ui_and_host_iana_when_agree() -> None:
     with patch(
-        "mlx_day_scheduler_pipeline.system_iana_timezone_name",
+        "day_scheduler_pipeline.system_iana_timezone_name",
         return_value="America/Chicago",
     ):
         user_txt, _, _ = prepare_day_scheduler_user_for_prompt(
@@ -26,7 +26,7 @@ def test_prompt_includes_ui_and_host_iana_when_agree() -> None:
 
 def test_prompt_flags_mismatch_between_ui_and_host_iana() -> None:
     with patch(
-        "mlx_day_scheduler_pipeline.system_iana_timezone_name",
+        "day_scheduler_pipeline.system_iana_timezone_name",
         return_value="America/New_York",
     ):
         user_txt, _, _ = prepare_day_scheduler_user_for_prompt(

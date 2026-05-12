@@ -7,7 +7,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from mlx_day_scheduler_pipeline import strip_reasoning_blocks
+from day_scheduler_pipeline import strip_reasoning_blocks
 
 
 @dataclass(frozen=True)

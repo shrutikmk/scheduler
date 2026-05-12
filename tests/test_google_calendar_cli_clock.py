@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import mlx_google_calendar_cli as cal
+import google_calendar_cli as cal
 
 
 def test_calendar_tz_label_prefers_zoneinfo_key() -> None:

@@ -18,14 +18,9 @@ samples-vllm = [
   "transformers>=4.45",
   "huggingface_hub>=0.27",
 ]
-samples-mlx = [
-  "httpx>=0.28",
-  "mlx-lm>=0.31",
-  "mlx>=0.31",
-  "huggingface_hub>=0.27",
-]
 samples-google-calendar = [
   "httpx>=0.28",
+  "transformers>=4.45",
   "google-auth>=2.29",
   "google-auth-oauthlib>=1.2",
 ]
@@ -38,11 +33,9 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
-"samples/mlx_chat_cli.py" = ["E402"]
-"samples/mlx_google_calendar_cli.py" = ["E402", "I001"]
-"app/mlx_day_scheduler_ui.py" = ["E402"]
-"app/mlx_llm_gateway.py" = ["E402"]
-"app/mlx_scheduler_llm_api.py" = ["E402"]
+"samples/google_calendar_cli.py" = ["E402", "I001"]
+"app/day_scheduler_web.py" = ["E402"]
+"app/scheduler_llm_http_handler.py" = ["E402"]
 "app/scheduler_llm_gateway.py" = ["E402"]
 "app/financial_analytics_ui.py" = ["E402"]
 "app/vllm_openai_client.py" = ["E402"]

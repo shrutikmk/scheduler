@@ -1,6 +1,6 @@
 """Paste helpers for Google Calendar MLX CLI."""
 
-from mlx_google_calendar_cli import _paste_block_closer, _pasted_multi_line_hint
+from google_calendar_cli import _paste_block_closer, _pasted_multi_line_hint
 
 
 def test_paste_closer_exact() -> None:

@@ -10,7 +10,7 @@ _tok_cache: dict[str, Any] = {}
 
 
 def load_tokenizer_only(model_path_or_id: str) -> Any:
-    """Load ``AutoTokenizer``; same id semantics as mlx-lm ``load``."""
+    """Load ``AutoTokenizer``; same id semantics as ``transformers`` / local snapshots."""
     key = str(model_path_or_id).strip()
     if not key:
         raise ValueError("empty model_path_or_id")
