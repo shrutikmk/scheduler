@@ -1,11 +1,31 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Test / lint
 .pytest_cache/
 .ruff_cache/
-.DS_Store
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Env (allow committing a template)
 .env
 .env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+*.swp
+*~
 
 # Local app data (SQLite, etc.)
 data/
@@ -15,6 +35,18 @@ data/
 # Habit Builder exports (folder kept via backups/.gitkeep)
 backups/*.json
 
+# Financial analytics uploads (folder kept via financial-data/.gitkeep)
+financial-data/*.csv
+
+# Private spend context for LLM titling (see prompts/financial-spend-knowledge.example.md)
+prompts/financial-spend-knowledge.md
+
+# Google Calendar OAuth — any JSON under credentials/ (keep credentials/.gitkeep)
+credentials/*.json
+client_secret*.json
+# Saved user token (filename used by app/CLIs; --token-cache can point inside the repo)
+oauth-token.json
+
 # Local model/cache artifacts
 models/
 .cache/
@@ -22,3 +54,9 @@ models/
 *.safetensors
 *.gguf
 *.bin
+
+# Logs / scratch
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
