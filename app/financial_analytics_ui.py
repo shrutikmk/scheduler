@@ -41,6 +41,7 @@ scheduled automatically (same as after upload/reindex).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -61,6 +62,7 @@ for _p in (_APP_ROOT, _SAMPLES_DIR):
     if _p.is_dir() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 from financial_pipeline_log import financial_flow_log
+from financial_spend_knowledge import load_spend_knowledge_for_prompt
 from http_access_rollup import AccessLogRollup
 
 _FIN_UI_HTTP_ACCESS = AccessLogRollup(
@@ -86,6 +88,15 @@ def _load_financial_system_prompt() -> str:
     raw = _PROMPT_PATH.read_text(encoding="utf-8")
     _system_prompt_cache = raw
     return raw
+
+
+def _insights_system_prompt_text() -> str:
+    """Base insights instructions plus optional spend knowledge (interpretive; amounts stay in user digest)."""
+    base = _load_financial_system_prompt().rstrip()
+    kb = load_spend_knowledge_for_prompt()
+    if not kb:
+        return base
+    return f"{base}\n\n{kb}".rstrip()
 
 
 def _safe_csv_filename(name: str | None) -> str | None:
@@ -895,6 +906,13 @@ def financial_dispatch_post(handler: BaseHTTPRequestHandler, path: str) -> bool:
             handler._send_json(400, {"error": "Unknown mode (use aggregate or snapshot)."})
             return True
 
+        try:
+            system = _insights_system_prompt_text()
+        except OSError as e:
+            handler._send_json(500, {"error": f"Missing system prompt: {e}"})
+            return True
+
+        insights_context_hash = hashlib.sha256(system.encode("utf-8")).hexdigest()
         ckey = build_insights_cache_key(
             view_mode=mode,
             snapshot_file=snapshot_safe,
@@ -902,6 +920,7 @@ def financial_dispatch_post(handler: BaseHTTPRequestHandler, path: str) -> bool:
             date_end=end.isoformat() if end else None,
             exclude_sav_brk=exclude_sav_brk,
             transaction_fingerprints=row_fp_list,
+            insights_context_hash=insights_context_hash,
         )
 
         if not force:
@@ -933,15 +952,10 @@ def financial_dispatch_post(handler: BaseHTTPRequestHandler, path: str) -> bool:
                 ck_conn.close()
 
         user_block = llm_digest_payload(summary, digest_context=digest_ctx)
-        try:
-            system = _load_financial_system_prompt()
-        except OSError as e:
-            handler._send_json(500, {"error": f"Missing system prompt: {e}"})
-            return True
         upstream_payload = {
             "system": system,
             "user": user_block,
-            "max_tokens": 2048,
+            "max_tokens": 3072,
         }
         insights_model = getattr(handler.server, "financial_insights_model", "")
         financial_flow_log(

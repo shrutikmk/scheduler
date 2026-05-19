@@ -281,8 +281,13 @@ def build_insights_cache_key(
     date_end: str | None,
     exclude_sav_brk: bool,
     transaction_fingerprints: list[str],
+    insights_context_hash: str = "",
 ) -> str:
-    """Stable key from view params + sorted ledger row fingerprints (dedupe identity)."""
+    """Stable key from view params + sorted ledger row fingerprints (dedupe identity).
+
+    ``insights_context_hash`` should digest the insights system prompt (including any spend
+    knowledge) so prompt or KB edits invalidate cached markdown without a full re-ledger.
+    """
     payload = {
         "mode": view_mode,
         "file": snapshot_file or "",
@@ -290,6 +295,7 @@ def build_insights_cache_key(
         "end": date_end or "",
         "ex": bool(exclude_sav_brk),
         "fps": sorted(transaction_fingerprints),
+        "ictx": str(insights_context_hash or ""),
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

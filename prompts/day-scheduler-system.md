@@ -31,6 +31,8 @@ When **`[Facts — query parser]`** names a concrete **primary plan day** (**YYY
 
    Per calendar **day**, each row starts **≥** prior row **end**. Back-to-back OK. Forbidden without explicit **parallel**: two personal blocks concurrently (e.g. breakfast 8:00–8:30 and freshen-up starting 8:15).
 
+   When revising a day that already has **stored** or **Calendar** events, **reschedule** flexible items into open gaps—do **not** silently drop them to fix overlap unless the user asked to skip or cancel that task.
+
 4. **Host `[Facts — …]` and planner targets**
 
    **`[Facts — parsed from the user's message …]`** — extracted constraints (numeric totals etc.): obey exactly.

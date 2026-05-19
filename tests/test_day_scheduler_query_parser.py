@@ -54,6 +54,15 @@ def test_resolve_import_default_plan_date_fallback_anchor() -> None:
     )
 
 
+def test_resolve_import_default_plan_date_prefers_planner_focus() -> None:
+    p = qp.ParsedQuery(primary_plan_date_iso=None)
+    assert qp.resolve_import_default_plan_date(
+        p,
+        client_clock_date_iso="2026-05-09",
+        planner_focus_date_iso="2026-05-12",
+    ) == ("2026-05-12")
+
+
 def test_format_query_parser_host_facts() -> None:
     p = qp.ParsedQuery(
         primary_plan_date_iso="2026-05-10",

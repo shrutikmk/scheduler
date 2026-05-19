@@ -19,6 +19,11 @@
   const STORE_NAME = "state";
   const TOTAL_POINTS = 4095; // 28 + sum(8..90)
   const PHASE2_MAX_POINTS = 4067; // sum(8..90)
+  /** Leg 8 … Leg 90 on-time mandatory rests (calendar Phase 2). */
+  const PHASE2_NOMINAL_REST_DAY_COUNT = 83;
+  const PHASE1_WEEKS_WORKNIGHT = 5;
+  const PHASE1_MAX_POINTS_WORKNIGHT = 15; // 1+2+3+4+5
+  const TOTAL_POINTS_WORKNIGHT = PHASE1_MAX_POINTS_WORKNIGHT + PHASE2_MAX_POINTS;
 
   /** Show enough fractional digits that +1 point (~100/4095 %) is visible. */
   function formatProgressPct(pct) {
@@ -68,8 +73,18 @@
     for (const k of Object.keys(days)) {
       if (!days[k]) delete days[k];
     }
+    let habit_type =
+      typeof raw.habit_type === "string" && raw.habit_type === "worknight" ? "worknight" : "default";
+    const cheat_days_raw =
+      raw.cheat_days && typeof raw.cheat_days === "object" && !Array.isArray(raw.cheat_days)
+        ? { ...raw.cheat_days }
+        : {};
+    const cheat_days = {};
+    for (const k of Object.keys(cheat_days_raw)) {
+      if (cheat_days_raw[k]) cheat_days[k] = true;
+    }
     if (!id) return null;
-    return { id, title, start, days };
+    return { id, title, start, days, habit_type, cheat_days };
   }
 
   function migrateFromLocalStorage() {
@@ -114,8 +129,12 @@
     el.classList.toggle("muted", ok);
   }
 
-  /** @type {{ id: string, title: string, start: string, days: Record<string, boolean> }[]} */
+  /** @type {{ id: string, title: string, start: string, days: Record<string, boolean>, habit_type: string, cheat_days: Record<string, boolean> }[]} */
   let habits = [];
+  /** @type {string | null} */
+  let habitTypePopoverHabitId = null;
+  /** @type {(() => void) | null} */
+  let habitTypePopoverTeardown = null;
   /** @type {string | null} */
   let selectedId = null;
   /** When true, persistence uses ``PUT /api/habits`` (same origin as the day-scheduler server). */
@@ -149,6 +168,8 @@
         title: h.title,
         start: h.start,
         days: { ...(h.days || {}) },
+        habit_type: h.habit_type === "worknight" ? "worknight" : "default",
+        cheat_days: { ...(h.cheat_days || {}) },
       })),
       selectedId,
       updatedAt: Date.now(),
@@ -346,6 +367,204 @@
     for (const k of Object.keys(h.days)) {
       if (daysDiff(h.start, k) < 0) delete h.days[k];
     }
+    if (h.cheat_days) {
+      for (const k of Object.keys(h.cheat_days)) {
+        if (daysDiff(h.start, k) < 0) delete h.cheat_days[k];
+      }
+    }
+  }
+
+  function isWorknight(h) {
+    return h.habit_type === "worknight";
+  }
+
+  function cheatDatesAsSet(h) {
+    const s = new Set();
+    const cd = h.cheat_days || {};
+    for (const k of Object.keys(cd)) {
+      if (cd[k]) s.add(k);
+    }
+    return s;
+  }
+
+  /** Cheats whose calendar date falls in [anchorISO − 29 days, anchorISO] (inclusive). */
+  function cheatCountRolling30Ending(h, anchorISO) {
+    const cd = h.cheat_days || {};
+    let n = 0;
+    for (const k of Object.keys(cd)) {
+      if (!cd[k]) continue;
+      const dd = daysDiff(k, anchorISO);
+      if (dd >= 0 && dd <= 29) n++;
+    }
+    return n;
+  }
+
+  /** Sun–Thu (local): streak nights skip Fri/Sat. */
+  function isSunThruThu(iso) {
+    const dow = parseISODate(iso).getDay();
+    return dow <= 4;
+  }
+
+  function firstSunThruThuOnOrAfter(iso) {
+    let d = iso;
+    let guard = 0;
+    while (!isSunThruThu(d) && guard++ < 14) {
+      d = addDaysISO(d, 1);
+    }
+    return d;
+  }
+
+  function nextSunThruThuAfter(iso) {
+    return firstSunThruThuOnOrAfter(addDaysISO(iso, 1));
+  }
+
+  function weekIndexUncapped(startISO, dateISO) {
+    if (daysDiff(startISO, dateISO) < 0) return -1;
+    const startSun = sundayOfWeekContaining(startISO);
+    const dateSun = sundayOfWeekContaining(dateISO);
+    return Math.floor(daysDiff(startSun, dateSun) / 7);
+  }
+
+  function weekHasCheat(startISO, weekIdx, cheatSet) {
+    const { weekStart, weekEnd } = phase1WeekRange(startISO, weekIdx);
+    for (const c of cheatSet) {
+      if (daysDiff(weekStart, c) >= 0 && daysDiff(c, weekEnd) >= 0) return true;
+    }
+    return false;
+  }
+
+  function cheatFrozenSundaySet(h) {
+    const set = new Set();
+    if (!isWorknight(h)) return set;
+    const cd = h.cheat_days || {};
+    for (const k of Object.keys(cd)) {
+      if (!cd[k]) continue;
+      set.add(sundayOfWeekContaining(k));
+    }
+    return set;
+  }
+
+  function closeHabitTypePopover() {
+    if (habitTypePopoverTeardown) {
+      habitTypePopoverTeardown();
+      habitTypePopoverTeardown = null;
+    }
+    habitTypePopoverHabitId = null;
+  }
+
+  function openHabitTypePopover(habitId, anchorEl) {
+    closeHabitTypePopover();
+    const h = habits.find((x) => x.id === habitId);
+    if (!h) return;
+    habitTypePopoverHabitId = habitId;
+    const backdrop = document.createElement("div");
+    backdrop.className = "habit-type-modal-backdrop";
+    backdrop.setAttribute("role", "presentation");
+    backdrop.tabIndex = -1;
+
+    const wrap = document.createElement("div");
+    wrap.className = "habit-type-modal-panel";
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.setAttribute("aria-labelledby", "habit-type-modal-title");
+
+    const head = document.createElement("div");
+    head.id = "habit-type-modal-title";
+    head.className = "habit-type-modal-title";
+    head.textContent = "Habit settings";
+
+    const nameLabel = document.createElement("div");
+    nameLabel.className = "habit-type-modal-title";
+    nameLabel.textContent = "Habit name";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "habit-settings-name-input";
+    nameInput.setAttribute("aria-label", "Habit name");
+    nameInput.maxLength = 120;
+    nameInput.value = h.title || "";
+
+    const typeLabel = document.createElement("div");
+    typeLabel.className = "habit-type-modal-title";
+    typeLabel.textContent = "Habit type";
+
+    const sel = document.createElement("select");
+    sel.className = "habit-type-select";
+    sel.setAttribute("aria-label", "Habit type");
+    for (const opt of [
+      { v: "default", t: "Default" },
+      { v: "worknight", t: "Worknight" },
+    ]) {
+      const o = document.createElement("option");
+      o.value = opt.v;
+      o.textContent = opt.t;
+      sel.appendChild(o);
+    }
+    sel.value = h.habit_type === "worknight" ? "worknight" : "default";
+    sel.addEventListener("change", () => {
+      h.habit_type = sel.value === "worknight" ? "worknight" : "default";
+      save();
+      closeHabitTypePopover();
+      render();
+    });
+
+    const hint = document.createElement("p");
+    hint.className = "habit-type-modal-hint muted";
+    hint.textContent =
+      "Worknight: Phase 1 is 5 calendar weeks (Sun–Thu pressure; Fri/Sat optional). Tap the same calendar day twice quickly for a cheat freeze (max 2 per rolling 30 days).";
+
+    const actions = document.createElement("div");
+    actions.className = "habit-type-modal-actions";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "habit-type-modal-close";
+    closeBtn.textContent = "Done";
+    closeBtn.addEventListener("click", () => {
+      const nextTitle = nameInput.value.trim();
+      if (nextTitle && nextTitle !== h.title) {
+        h.title = nextTitle;
+        save();
+        render();
+      }
+      closeHabitTypePopover();
+    });
+
+    wrap.appendChild(head);
+    wrap.appendChild(nameLabel);
+    wrap.appendChild(nameInput);
+    wrap.appendChild(typeLabel);
+    wrap.appendChild(sel);
+    wrap.appendChild(hint);
+    actions.appendChild(closeBtn);
+    wrap.appendChild(actions);
+    backdrop.appendChild(wrap);
+    document.body.appendChild(backdrop);
+
+    const onBackdropMouseDown = (ev) => {
+      if (ev.target === backdrop) closeHabitTypePopover();
+    };
+    const onKey = (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeHabitTypePopover();
+      }
+    };
+    backdrop.addEventListener("mousedown", onBackdropMouseDown);
+    document.addEventListener("keydown", onKey, true);
+
+    requestAnimationFrame(() => {
+      nameInput.focus();
+    });
+
+    habitTypePopoverTeardown = () => {
+      backdrop.removeEventListener("mousedown", onBackdropMouseDown);
+      document.removeEventListener("keydown", onKey, true);
+      backdrop.remove();
+      if (anchorEl) {
+        anchorEl.setAttribute("aria-expanded", "false");
+      }
+    };
+    anchorEl.setAttribute("aria-expanded", "true");
   }
 
   function uuid() {
@@ -357,13 +576,24 @@
     return Object.keys(h.days || {}).filter((k) => h.days[k]).sort();
   }
 
-  /** Furthest date we need for phase-2 simulation: today or latest mark, whichever is later (ISO date order). */
-  function maxDerivedScanISO(h) {
-    const marks = markedDates(h);
+  /**
+   * Furthest date we need for phase-2 simulation: today or latest mark, whichever is later.
+   * When Phase 1 is satisfied and `boundaryISO` is set, never scan **before** the first Phase-2
+   * calendar day (`boundary + 1`, or first Sun–Thu night after that for worknight). Otherwise
+   * strict Phase-2 points stay at 0 while the latest mark is still on the last Phase-1 day.
+   */
+  function maxDerivedScanISO(h, boundaryISO) {
     const t = todayISO();
-    if (!marks.length) return t;
-    const last = marks[marks.length - 1];
-    return last > t ? last : t;
+    const marks = markedDates(h);
+    const last = marks.length ? marks[marks.length - 1] : t;
+    let base = last > t ? last : t;
+    if (boundaryISO) {
+      const edge = isWorknight(h)
+        ? firstSunThruThuOnOrAfter(addDaysISO(boundaryISO, 1))
+        : addDaysISO(boundaryISO, 1);
+      if (base < edge) base = edge;
+    }
+    return base;
   }
 
   /** Sunday (local) of the calendar week that contains `iso` (week = Sun–Sat). */
@@ -413,6 +643,85 @@
     return { actual, phase1Earned, phase1Satisfied: satisfied };
   }
 
+  /** Which Phase 1 week (1–7) the status line highlights for ``anchorISO`` (calendar weeks). */
+  function phase1CurrentWeekUiIndex(startISO, anchorISO, actual) {
+    let rawW = weekIndexForDate(startISO, anchorISO);
+    let w = rawW;
+    if (w < 0) w = 0;
+    if (w > 6) {
+      let firstShort = -1;
+      for (let i = 0; i < 7; i++) {
+        if (actual[i] < i + 1) {
+          firstShort = i;
+          break;
+        }
+      }
+      w = firstShort >= 0 ? firstShort : 6;
+    }
+    return w;
+  }
+
+  /** Worknight Phase 1 week index for UI (1–5). */
+  function phase1CurrentWeekUiIndexWorknight(startISO, anchorISO, actual, cheatSet) {
+    let rawW = weekIndexUncapped(startISO, anchorISO);
+    let w = rawW;
+    if (w < 0) w = 0;
+    if (w > PHASE1_WEEKS_WORKNIGHT - 1) {
+      let firstShort = -1;
+      for (let i = 0; i < PHASE1_WEEKS_WORKNIGHT; i++) {
+        const need = i + 1;
+        const ok = actual[i] >= need || weekHasCheat(startISO, i, cheatSet);
+        if (!ok) {
+          firstShort = i;
+          break;
+        }
+      }
+      w = firstShort >= 0 ? firstShort : PHASE1_WEEKS_WORKNIGHT - 1;
+    }
+    return w;
+  }
+
+  function phase1StatsWorknight(startISO, marks, cheatSet) {
+    const actual = [0, 0, 0, 0, 0];
+    for (const iso of marks) {
+      if (daysDiff(startISO, iso) < 0) continue;
+      const w = weekIndexUncapped(startISO, iso);
+      if (w >= 0 && w < PHASE1_WEEKS_WORKNIGHT) actual[w]++;
+    }
+    let phase1Earned = 0;
+    let satisfied = true;
+    for (let w = 0; w < PHASE1_WEEKS_WORKNIGHT; w++) {
+      const need = w + 1;
+      const cheatW = weekHasCheat(startISO, w, cheatSet);
+      const eff = cheatW ? Math.max(actual[w], need) : actual[w];
+      phase1Earned += Math.min(eff, need);
+      if (!(actual[w] >= need || cheatW)) satisfied = false;
+    }
+    return { actual, phase1Earned, phase1Satisfied: satisfied };
+  }
+
+  /**
+   * Earliest D: max over w of the (need)-th marked date in week w (chronological within week).
+   * If any week lacks enough marks, returns null.
+   */
+  function phase2BoundaryDateWorknight(startISO, marks) {
+    const byWeek = Array.from({ length: PHASE1_WEEKS_WORKNIGHT }, () => []);
+    for (const iso of marks) {
+      if (daysDiff(startISO, iso) < 0) continue;
+      const w = weekIndexUncapped(startISO, iso);
+      if (w >= 0 && w < PHASE1_WEEKS_WORKNIGHT) byWeek[w].push(iso);
+    }
+    for (let w = 0; w < PHASE1_WEEKS_WORKNIGHT; w++) byWeek[w].sort();
+    let maxD = null;
+    for (let w = 0; w < PHASE1_WEEKS_WORKNIGHT; w++) {
+      const need = w + 1;
+      if (byWeek[w].length < need) return null;
+      const d = byWeek[w][need - 1];
+      if (maxD === null || daysDiff(maxD, d) > 0) maxD = d;
+    }
+    return maxD;
+  }
+
   /**
    * Earliest D: max over w of the (need)-th marked date in week w (chronological within week).
    * If any week lacks enough marks, returns null.
@@ -436,6 +745,65 @@
   }
 
   /**
+   * Nominal mandatory-rest ISO dates from Phase 2 calendar day 1 (perfect adherence).
+   * Length {@link PHASE2_NOMINAL_REST_DAY_COUNT}.
+   */
+  function nominalPhase2RestDates(phase2StartISO) {
+    if (!phase2StartISO || typeof phase2StartISO !== "string") return [];
+    const cur = parseISODate(phase2StartISO);
+    if (Number.isNaN(cur.getTime())) return [];
+    let cursor = phase2StartISO;
+    const out = [];
+    for (let n = 8; n <= 90; n++) {
+      const rest = addDaysISO(cursor, n);
+      out.push(rest);
+      cursor = addDaysISO(rest, 1);
+    }
+    return out;
+  }
+
+  /**
+   * Long-run leg UI: count marks in the current nominal leg window (gap = calendar days from leg start
+   * to mandatory rest). Matches "Next Rest" nominal schedule. Uses max(today, latest Phase 2 mark) so a
+   * pre-logged next-leg day rolls the counter forward while today is still the rest day.
+   * @returns {{ label: string, counter: string, targetLen: number, run: number } | null}
+   */
+  function phase2LegProgressFromNominalRests(phase2StartISO, marksSet, todayISO) {
+    if (!phase2StartISO || typeof phase2StartISO !== "string") return null;
+    const rests = nominalPhase2RestDates(phase2StartISO);
+    if (!rests.length) return null;
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    let anchorISO = todayISO;
+    for (const iso of mark) {
+      if (daysDiff(phase2StartISO, iso) >= 0 && iso > anchorISO) anchorISO = iso;
+    }
+    let legStart = phase2StartISO;
+    for (const rest of rests) {
+      if (daysDiff(anchorISO, rest) >= 0) {
+        const gap = daysDiff(legStart, rest);
+        if (gap < 8 || gap > 90) return null;
+        let filled = 0;
+        for (const iso of mark) {
+          if (daysDiff(legStart, iso) >= 0 && daysDiff(iso, rest) > 0) filled++;
+        }
+        const label = formatLegLabel(gap);
+        if (!label) return null;
+        return { label, counter: `${filled}/${gap}`, targetLen: gap, run: filled };
+      }
+      legStart = addDaysISO(rest, 1);
+    }
+    const gap = 90;
+    const restAfter = addDaysISO(legStart, gap);
+    let filled = 0;
+    for (const iso of mark) {
+      if (daysDiff(legStart, iso) >= 0 && daysDiff(iso, restAfter) > 0) filled++;
+    }
+    const label = formatLegLabel(gap);
+    if (!label) return null;
+    return { label, counter: `${filled}/${gap}`, targetLen: gap, run: filled };
+  }
+
+  /**
    * @returns {{ phase2Earned: number, complete: boolean, targetL: number, run: number, needRest: boolean, violation: boolean }}
    */
   function simulatePhase2(boundaryISO, marksSet, maxScanISO) {
@@ -449,7 +817,7 @@
     let violation = false;
 
     let guard = 0;
-    while (daysDiff(day, maxScanISO) <= 0 && !complete && guard < 12000) {
+    while (daysDiff(day, maxScanISO) >= 0 && !complete && guard < 12000) {
       guard++;
       const done = mark.has(day);
       if (needRest) {
@@ -567,19 +935,20 @@
   }
 
   /**
-   * Re-run simulation tracking rest-window for UI.
+   * Re-run simulation tracking rest-window for UI (forgiving Phase 2 ladder from firstP2; no Phase 1 carry-in).
    */
-  function deriveRestDaySet(boundaryISO, marksSet) {
+  function deriveRestDaySet(boundaryISO, marksSet, habitStartISO) {
     const set = new Set();
     const mark = new Set(marksSet);
-    let day = addDaysISO(boundaryISO, 1);
+    const firstP2 = addDaysISO(boundaryISO, 1);
+    let day = firstP2;
     let targetL = 8;
     let run = 0;
     let needRest = false;
     let complete = false;
     const maxScanISO = addDaysISO(todayISO(), 365 * 5);
     let guard = 0;
-    while (daysDiff(day, maxScanISO) <= 0 && !complete && guard < 12000) {
+    while (daysDiff(day, maxScanISO) >= 0 && !complete && guard < 12000) {
       guard++;
       const done = mark.has(day);
       if (needRest) {
@@ -655,6 +1024,557 @@
     return { targetL, run, needRest, violation, beforePhase2: false };
   }
 
+  /**
+   * Same as {@link stateAtStartOfDay}, but when replaying **past** days (`day < dayISO`), a mark on a
+   * mandatory **rest** slot is ignored so planner UI still shows next rest / next log after old mistakes.
+   * (Strict simulation and points still use {@link stateAtStartOfDay}.)
+   *
+   * Phase 2 ladder **starts empty at firstP2** (L8, run 0). Phase 1 marks are **not** replayed as ladder
+   * carry-in—otherwise weekly quota streaks are mistaken for partial long-run legs (e.g. showing 7/8 on
+   * the first Phase 2 day and the wrong “next rest”).
+   * @param {string} [habitStartISO] — unused; kept for call compatibility.
+   */
+  function stateAtStartOfDayForgiving(boundaryISO, marksSet, dayISO, habitStartISO) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const firstP2 = addDaysISO(boundaryISO, 1);
+    if (daysDiff(dayISO, firstP2) < 0) {
+      return {
+        targetL: 8,
+        run: 0,
+        needRest: false,
+        violation: false,
+        beforePhase2: true,
+      };
+    }
+    let day = firstP2;
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let violation = false;
+    let guard = 0;
+    while (daysDiff(day, dayISO) < 0 && !violation && guard < 12000) {
+      guard++;
+      let done = mark.has(day);
+      if (needRest) {
+        if (done) {
+          if (daysDiff(day, dayISO) < 0) {
+            done = false;
+          } else {
+            violation = true;
+            break;
+          }
+        }
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else {
+        if (done) {
+          run++;
+          if (run === targetL) {
+            run = 0;
+            if (targetL === 90) {
+              /** complete */
+            } else {
+              needRest = true;
+            }
+          }
+        } else {
+          run = 0;
+        }
+      }
+      day = addDaysISO(day, 1);
+    }
+    return { targetL, run, needRest, violation, beforePhase2: false };
+  }
+
+  /** Next calendar day (on/after `startFromISO`) where Phase 2 requires a rest (unchecked day). */
+  function nextNeedRestStartISO(boundaryISO, marksSet, startFromISO, habitStartISO) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    let d = startFromISO;
+    for (let i = 0; i < 800; i++) {
+      const st = stateAtStartOfDayForgiving(boundaryISO, mark, d, habitStartISO);
+      if (st.violation || st.beforePhase2) return null;
+      if (st.needRest) return d;
+      d = addDaysISO(d, 1);
+    }
+    return null;
+  }
+
+  /** Same for worknight: only considers Sun–Thu dates as eligible “nights” (matches planner UI). */
+  function nextNeedRestStartISOWorknight(boundaryISO, marksSet, startFromISO, cheatFrozenSuns, habitStartISO) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const cheatFrozen =
+      cheatFrozenSuns instanceof Set ? cheatFrozenSuns : new Set(cheatFrozenSuns || []);
+    let d = startFromISO;
+    for (let i = 0; i < 800; i++) {
+      if (!isSunThruThu(d)) {
+        d = addDaysISO(d, 1);
+        continue;
+      }
+      const st = stateAtStartOfDayWorknightForgiving(boundaryISO, mark, d, cheatFrozen, habitStartISO);
+      if (st.violation || st.beforePhase2) return null;
+      if (st.needRest) return d;
+      d = addDaysISO(d, 1);
+    }
+    return null;
+  }
+
+  /**
+   * Next mandatory rest on/after `todayISO`, walking forward from {@link stateAtStartOfDayForgiving}
+   * so gaps / past mistakes do not erase the schedule. Falls back to a full forgiving replay when
+   * still in before-Phase-2.
+   */
+  function nextProjectedRestForwardCalendar(boundaryISO, mark, todayISO, st) {
+    if (st.beforePhase2 || st.violation) return null;
+    let targetL = st.targetL;
+    let run = st.run;
+    let needRest = st.needRest;
+    let day = todayISO;
+    for (let iter = 0; iter < 500; iter++) {
+      if (needRest) {
+        if (mark.has(day)) return null;
+        return day;
+      }
+      let done;
+      if (daysDiff(day, todayISO) >= 0) {
+        done = mark.has(day);
+      } else {
+        done = true;
+      }
+      if (done) {
+        run++;
+        if (run === targetL) {
+          run = 0;
+          if (targetL === 90) return null;
+          needRest = true;
+        }
+      } else {
+        run = 0;
+      }
+      day = addDaysISO(day, 1);
+    }
+    return null;
+  }
+
+  /**
+   * Next mandatory rest **assuming you stay on schedule**: past/today use actual marks; future streak
+   * days are treated as logged so we can show a forward rest date before those days exist.
+   * Past logs on historical mandatory rest slots are ignored for this projection only (see forgiving state).
+   */
+  function nextProjectedRestISO(boundaryISO, marksSet, todayISO, habitStartISO) {
+    const mark = new Set(marksSet);
+    const firstP2 = addDaysISO(boundaryISO, 1);
+    if (daysDiff(firstP2, todayISO) >= 0) {
+      const st = stateAtStartOfDayForgiving(boundaryISO, mark, todayISO, habitStartISO);
+      const forward = nextProjectedRestForwardCalendar(boundaryISO, mark, todayISO, st);
+      if (forward) return forward;
+    }
+
+    let day = firstP2;
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let complete = false;
+    const maxScan = addDaysISO(todayISO, 500);
+    let guard = 0;
+
+    while (daysDiff(day, maxScan) >= 0 && !complete && guard < 12000) {
+      guard++;
+      let done;
+      if (needRest) {
+        done = mark.has(day);
+        if (done && daysDiff(day, todayISO) > 0) {
+          done = false;
+        }
+      } else if (daysDiff(day, todayISO) >= 0) {
+        done = mark.has(day);
+      } else {
+        done = true;
+      }
+
+      if (needRest) {
+        if (done) {
+          return null;
+        }
+        if (daysDiff(day, todayISO) >= 0) {
+          return day;
+        }
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else if (done) {
+        run++;
+        if (run === targetL) {
+          run = 0;
+          if (targetL === 90) {
+            complete = true;
+          } else {
+            needRest = true;
+          }
+        }
+      } else {
+        run = 0;
+      }
+      day = addDaysISO(day, 1);
+    }
+    return null;
+  }
+
+  function nextProjectedRestForwardWorknight(boundaryISO, mark, todayISO, cheatFrozenSuns, st) {
+    const cheatFrozen =
+      cheatFrozenSuns instanceof Set ? cheatFrozenSuns : new Set(cheatFrozenSuns || []);
+    if (st.beforePhase2 || st.violation) return null;
+    let targetL = st.targetL;
+    let run = st.run;
+    let needRest = st.needRest;
+    let night = firstSunThruThuOnOrAfter(todayISO);
+    for (let iter = 0; iter < 500; iter++) {
+      const sun = sundayOfWeekContaining(night);
+      const frozen = cheatFrozen.has(sun);
+      if (needRest) {
+        if (mark.has(night)) return null;
+        return night;
+      }
+      let done;
+      if (daysDiff(night, todayISO) >= 0) {
+        done = mark.has(night);
+      } else {
+        done = frozen ? mark.has(night) : true;
+      }
+      if (done) {
+        run++;
+        if (run === targetL) {
+          run = 0;
+          if (targetL === 90) return null;
+          needRest = true;
+        }
+      } else if (!frozen) {
+        run = 0;
+      }
+      night = nextSunThruThuAfter(night);
+    }
+    return null;
+  }
+
+  /** Worknight: same on-schedule projection (Sun–Thu chain; Fri/Sat skipped by night iterator). */
+  function nextProjectedRestISOWorknight(boundaryISO, marksSet, todayISO, cheatFrozenSuns, habitStartISO) {
+    const mark = new Set(marksSet);
+    const cheatFrozen =
+      cheatFrozenSuns instanceof Set ? cheatFrozenSuns : new Set(cheatFrozenSuns || []);
+    const firstP2 = firstSunThruThuOnOrAfter(addDaysISO(boundaryISO, 1));
+    if (daysDiff(firstP2, todayISO) >= 0) {
+      const st = stateAtStartOfDayWorknightForgiving(boundaryISO, mark, todayISO, cheatFrozen, habitStartISO);
+      const forward = nextProjectedRestForwardWorknight(boundaryISO, mark, todayISO, cheatFrozen, st);
+      if (forward) return forward;
+    }
+
+    let night = firstP2;
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let complete = false;
+    const maxScan = addDaysISO(todayISO, 500);
+    let guard = 0;
+
+    while (daysDiff(night, maxScan) >= 0 && !complete && guard < 12000) {
+      guard++;
+      const sun = sundayOfWeekContaining(night);
+      const frozen = cheatFrozen.has(sun);
+      let done;
+      if (needRest) {
+        done = mark.has(night);
+        if (done && daysDiff(night, todayISO) > 0) {
+          done = false;
+        }
+      } else if (daysDiff(night, todayISO) >= 0) {
+        done = mark.has(night);
+      } else {
+        done = frozen ? mark.has(night) : true;
+      }
+
+      if (needRest) {
+        if (done) {
+          return null;
+        }
+        if (daysDiff(night, todayISO) >= 0) {
+          return night;
+        }
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else if (done) {
+        run++;
+        if (run === targetL) {
+          run = 0;
+          if (targetL === 90) {
+            complete = true;
+          } else {
+            needRest = true;
+          }
+        }
+      } else if (!frozen) {
+        run = 0;
+      }
+      night = nextSunThruThuAfter(night);
+    }
+    return null;
+  }
+
+  function simulatePhase2Worknight(boundaryISO, marksSet, maxScanISO, cheatFrozenSuns) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    let night = firstSunThruThuOnOrAfter(addDaysISO(boundaryISO, 1));
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let phase2Earned = 0;
+    let complete = false;
+    let violation = false;
+
+    let guard = 0;
+    while (daysDiff(night, maxScanISO) >= 0 && !complete && guard < 12000) {
+      guard++;
+      const sun = sundayOfWeekContaining(night);
+      const frozen = cheatFrozenSuns.has(sun);
+      const done = mark.has(night);
+      if (needRest) {
+        if (done) {
+          violation = true;
+          break;
+        }
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else if (done) {
+        run++;
+        phase2Earned++;
+        if (run === targetL) {
+          run = 0;
+          if (targetL === 90) {
+            complete = true;
+          } else {
+            needRest = true;
+          }
+        }
+      } else if (!frozen) {
+        run = 0;
+      }
+      night = nextSunThruThuAfter(night);
+    }
+
+    return { phase2Earned, complete, targetL, run, needRest, violation };
+  }
+
+  function phase2MarksSunThruThuAsc(boundaryISO, marksSet) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const firstP2 = addDaysISO(boundaryISO, 1);
+    const out = [];
+    for (const iso of mark) {
+      if (daysDiff(firstP2, iso) >= 0 && isSunThruThu(iso)) out.push(iso);
+    }
+    out.sort();
+    return out;
+  }
+
+  function contiguousRunsWorknight(sortedAsc) {
+    if (!sortedAsc.length) return [];
+    const runs = [];
+    let runStart = sortedAsc[0];
+    let prev = sortedAsc[0];
+    let len = 1;
+    for (let i = 1; i < sortedAsc.length; i++) {
+      const iso = sortedAsc[i];
+      if (nextSunThruThuAfter(prev) === iso) {
+        len += 1;
+      } else {
+        runs.push({ start: runStart, end: prev, length: len });
+        runStart = iso;
+        len = 1;
+      }
+      prev = iso;
+    }
+    runs.push({ start: runStart, end: prev, length: len });
+    return runs;
+  }
+
+  function maxPhase2RunLengthWorknight(boundaryISO, marksSet) {
+    const asc = phase2MarksSunThruThuAsc(boundaryISO, marksSet);
+    const runs = contiguousRunsWorknight(asc);
+    let m = 0;
+    for (const r of runs) if (r.length > m) m = r.length;
+    return m;
+  }
+
+  function terminalPhase2RunLengthWorknight(boundaryISO, marksSet) {
+    const asc = phase2MarksSunThruThuAsc(boundaryISO, marksSet);
+    const runs = contiguousRunsWorknight(asc);
+    return runs.length ? runs[runs.length - 1].length : 0;
+  }
+
+  function simulatePhase2ForgivingWorknight(boundaryISO, marksSet) {
+    const maxLen = maxPhase2RunLengthWorknight(boundaryISO, marksSet);
+    if (maxLen >= 90) {
+      return { forgivingPhase2Pts: PHASE2_MAX_POINTS, forgivingComplete: true };
+    }
+    const R = terminalPhase2RunLengthWorknight(boundaryISO, marksSet);
+    if (R <= 0) {
+      return { forgivingPhase2Pts: 0, forgivingComplete: false };
+    }
+    let pos = 0;
+    let m = 8;
+    let earned = 0;
+    while (m <= 90) {
+      const rem = R - pos;
+      if (rem >= m) {
+        pos += m;
+        earned += m;
+        m += 1;
+      } else {
+        earned += rem;
+        break;
+      }
+    }
+    const forgivingComplete = earned >= PHASE2_MAX_POINTS;
+    const capped = Math.min(PHASE2_MAX_POINTS, earned);
+    return { forgivingPhase2Pts: capped, forgivingComplete };
+  }
+
+  function deriveRestDaySetWorknight(boundaryISO, marksSet, cheatFrozenSuns, habitStartISO) {
+    const set = new Set();
+    const mark = new Set(marksSet);
+    const cheatFrozen =
+      cheatFrozenSuns instanceof Set ? cheatFrozenSuns : new Set(cheatFrozenSuns || []);
+    const firstP2 = firstSunThruThuOnOrAfter(addDaysISO(boundaryISO, 1));
+    let night = firstP2;
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let complete = false;
+    const maxScanISO = addDaysISO(todayISO(), 365 * 5);
+    let guard = 0;
+    while (daysDiff(night, maxScanISO) >= 0 && !complete && guard < 12000) {
+      guard++;
+      const sun = sundayOfWeekContaining(night);
+      const frozen = cheatFrozen.has(sun);
+      const done = mark.has(night);
+      if (needRest) {
+        set.add(night);
+        if (done) break;
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else if (done) {
+        run++;
+        if (run === targetL) {
+          run = 0;
+          if (targetL === 90) complete = true;
+          else needRest = true;
+        }
+      } else if (!frozen) {
+        run = 0;
+      }
+      night = nextSunThruThuAfter(night);
+    }
+    return set;
+  }
+
+  function stateAtStartOfDayWorknight(boundaryISO, marksSet, dayISO, cheatFrozenSuns) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const firstP2 = firstSunThruThuOnOrAfter(addDaysISO(boundaryISO, 1));
+    if (daysDiff(dayISO, firstP2) < 0) {
+      return {
+        targetL: 8,
+        run: 0,
+        needRest: false,
+        violation: false,
+        beforePhase2: true,
+      };
+    }
+    let night = firstP2;
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let violation = false;
+    let guard = 0;
+    while (daysDiff(night, dayISO) < 0 && !violation && guard < 12000) {
+      guard++;
+      const sun = sundayOfWeekContaining(night);
+      const frozen = cheatFrozenSuns.has(sun);
+      const done = mark.has(night);
+      if (needRest) {
+        if (done) {
+          violation = true;
+          break;
+        }
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else if (done) {
+        run++;
+        if (run === targetL) {
+          run = 0;
+          if (targetL === 90) {
+            /* complete */
+          } else {
+            needRest = true;
+          }
+        }
+      } else if (!frozen) {
+        run = 0;
+      }
+      night = nextSunThruThuAfter(night);
+    }
+    return { targetL, run, needRest, violation, beforePhase2: false };
+  }
+
+  /** Forgiving variant of {@link stateAtStartOfDayWorknight} for UI (see {@link stateAtStartOfDayForgiving}). */
+  function stateAtStartOfDayWorknightForgiving(boundaryISO, marksSet, dayISO, cheatFrozenSuns, habitStartISO) {
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const cheatFrozen =
+      cheatFrozenSuns instanceof Set ? cheatFrozenSuns : new Set(cheatFrozenSuns || []);
+    const firstP2 = firstSunThruThuOnOrAfter(addDaysISO(boundaryISO, 1));
+    if (daysDiff(dayISO, firstP2) < 0) {
+      return {
+        targetL: 8,
+        run: 0,
+        needRest: false,
+        violation: false,
+        beforePhase2: true,
+      };
+    }
+    let night = firstP2;
+    let targetL = 8;
+    let run = 0;
+    let needRest = false;
+    let violation = false;
+    let guard = 0;
+    while (daysDiff(night, dayISO) < 0 && !violation && guard < 12000) {
+      guard++;
+      const sun = sundayOfWeekContaining(night);
+      const frozen = cheatFrozen.has(sun);
+      let done = mark.has(night);
+      if (needRest) {
+        if (done) {
+          if (daysDiff(night, dayISO) < 0) {
+            done = false;
+          } else {
+            violation = true;
+            break;
+          }
+        }
+        needRest = false;
+        if (targetL < 90) targetL++;
+      } else if (done) {
+        run++;
+        if (run === targetL) {
+          run = 0;
+          if (targetL === 90) {
+            /* complete */
+          } else {
+            needRest = true;
+          }
+        }
+      } else if (!frozen) {
+        run = 0;
+      }
+      night = nextSunThruThuAfter(night);
+    }
+    return { targetL, run, needRest, violation, beforePhase2: false };
+  }
+
   function formatScheduleDay(iso) {
     return parseISODate(iso).toLocaleDateString(undefined, {
       weekday: "short",
@@ -662,6 +1582,48 @@
       day: "numeric",
       year: "numeric",
     });
+  }
+
+  /** Phase-2 leg badge: L8–L90 (matches ladder target length). */
+  function formatLegLabel(targetLen) {
+    if (typeof targetLen !== "number" || targetLen < 8 || targetLen > 90) return null;
+    return `L${targetLen}`;
+  }
+
+  /**
+   * @param {{ targetL: number, run: number, needRest: boolean, violation: boolean, beforePhase2: boolean }} st
+   * @returns {{ label: string | null, detail: string | null }}
+   */
+  function longRunLegFromState(st) {
+    if (!st || st.violation) {
+      return { label: null, detail: null };
+    }
+    if (st.beforePhase2) {
+      return { label: "L8", detail: "First long-run leg (L8) begins on your first Phase 2 day." };
+    }
+    if (st.needRest) {
+      if (st.targetL >= 90) {
+        return { label: "L90", detail: "Final leg finished." };
+      }
+      const cur = formatLegLabel(st.targetL);
+      const nxt = formatLegLabel(st.targetL + 1);
+      return {
+        label: cur,
+        detail: `Mandatory rest after ${cur}.${nxt ? ` Next leg: ${nxt}.` : ""}`,
+      };
+    }
+    return { label: formatLegLabel(st.targetL), detail: null };
+  }
+
+  /**
+   * Progress slice for the points row, e.g. "3/8" (streak run / leg target length). Uses forgiving state at
+   * the UI leg anchor day: an open calendar today does not reset the streak; once today is marked, the streak
+   * includes it. At mandatory rest after completing a leg, "n/n"; omitted before calendar Phase 2 or on violation.
+   */
+  function longRunLegCounterFromState(st) {
+    if (!st || st.violation || st.beforePhase2) return null;
+    if (st.needRest) return `${st.targetL}/${st.targetL}`;
+    return `${st.run}/${st.targetL}`;
   }
 
   /**
@@ -703,6 +1665,35 @@
     return null;
   }
 
+  /** Worknight Phase 1: planner-style pressure uses Sun–Thu only; skips cheat-frozen weeks. */
+  function nextHabitDayPhase1Worknight(h, actual, startISO, todayStr, cheatSet) {
+    const cursor = todayStr > startISO ? todayStr : startISO;
+    for (let w = 0; w < PHASE1_WEEKS_WORKNIGHT; w++) {
+      if (weekHasCheat(startISO, w, cheatSet)) continue;
+      const need = w + 1;
+      const done = actual[w];
+      if (done >= need) continue;
+      const { weekStart, weekEnd } = phase1WeekRange(startISO, w);
+      if (cursor > weekEnd) continue;
+      let eligibleStart = weekStart;
+      if (cursor > eligibleStart) eligibleStart = cursor;
+      if (startISO > eligibleStart) eligibleStart = startISO;
+      if (eligibleStart > weekEnd) continue;
+      const avail = [];
+      let d = eligibleStart;
+      while (d <= weekEnd) {
+        if (isSunThruThu(d) && !h.days[d]) avail.push(d);
+        d = addDaysISO(d, 1);
+      }
+      const remaining = need - done;
+      if (avail.length < remaining) {
+        return { iso: cursor, backlog: true };
+      }
+      return { iso: avail[avail.length - remaining], backlog: false };
+    }
+    return null;
+  }
+
   function nextRestFromSet(restDays, todayISO) {
     let best = null;
     for (const r of restDays) {
@@ -712,15 +1703,51 @@
     return best;
   }
 
-  function nextHabitDayPhase2(boundaryISO, marksSet, todayISO, programComplete) {
+  function nextHabitDayPhase2(boundaryISO, marksSet, todayISO, programComplete, habitStartISO) {
     if (programComplete) return null;
     const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
     const firstP2 = addDaysISO(boundaryISO, 1);
-    if (daysDiff(todayISO, firstP2) > 0) return firstP2;
-
     let d = todayISO;
+    if (daysDiff(d, firstP2) < 0) {
+      d = firstP2;
+    }
     for (let i = 0; i < 800; i++) {
-      const st = stateAtStartOfDay(boundaryISO, mark, d);
+      const st = stateAtStartOfDayForgiving(boundaryISO, mark, d, habitStartISO);
+      if (st.violation) return null;
+      if (st.needRest) {
+        if (mark.has(d)) return null;
+        d = addDaysISO(d, 1);
+        continue;
+      }
+      if (!mark.has(d)) return d;
+      d = addDaysISO(d, 1);
+    }
+    return null;
+  }
+
+  function nextHabitDayPhase2Worknight(
+    boundaryISO,
+    marksSet,
+    todayStr,
+    programComplete,
+    cheatFrozenSuns,
+    habitStartISO,
+  ) {
+    if (programComplete) return null;
+    const mark = marksSet instanceof Set ? marksSet : new Set(marksSet);
+    const cheatFrozen =
+      cheatFrozenSuns instanceof Set ? cheatFrozenSuns : new Set(cheatFrozenSuns || []);
+    const firstP2 = firstSunThruThuOnOrAfter(addDaysISO(boundaryISO, 1));
+    let d = todayStr;
+    if (daysDiff(d, firstP2) < 0) {
+      d = firstP2;
+    }
+    for (let i = 0; i < 800; i++) {
+      if (!isSunThruThu(d)) {
+        d = addDaysISO(d, 1);
+        continue;
+      }
+      const st = stateAtStartOfDayWorknightForgiving(boundaryISO, mark, d, cheatFrozen, habitStartISO);
       if (st.violation) return null;
       if (st.needRest) {
         if (mark.has(d)) return null;
@@ -734,12 +1761,13 @@
   }
 
   function deriveHabit(h) {
+    if (isWorknight(h)) return deriveHabitWorknight(h);
     const marks = markedDates(h);
     const marksSet = new Set(marks);
     const { actual, phase1Earned, phase1Satisfied } = phase1Stats(h.start, marks);
 
     const boundary = phase1Satisfied ? phase2BoundaryDate(h.start, marks) : null;
-    const maxISO = maxDerivedScanISO(h);
+    const maxISO = maxDerivedScanISO(h, boundary);
     let phase2Earned = 0;
     let strictPct = (100 * phase1Earned) / TOTAL_POINTS;
     let forgivingPct = (100 * phase1Earned) / TOTAL_POINTS;
@@ -763,30 +1791,57 @@
       const f = simulatePhase2Forgiving(boundary, marksSet);
       forgivingPhase2Pts = f.forgivingPhase2Pts;
       forgivingComplete = f.forgivingComplete;
+      forgivingPhase2Pts = Math.max(forgivingPhase2Pts, phase2Earned);
       forgivingPct = (100 * (phase1Earned + forgivingPhase2Pts)) / TOTAL_POINTS;
       if (forgivingComplete) forgivingPct = 100;
 
-      restDays = deriveRestDaySet(boundary, marksSet);
+      restDays = deriveRestDaySet(boundary, marksSet, h.start);
     }
+
+    const phase2StartISO = boundary !== null ? addDaysISO(boundary, 1) : null;
+    const nominalRestISOList = phase2StartISO ? nominalPhase2RestDates(phase2StartISO) : [];
+    const nominalRestDays = new Set(nominalRestISOList);
 
     const programDone = Boolean(strictComplete || forgivingComplete);
 
     const today = todayISO();
+    const tomorrow = addDaysISO(today, 1);
+    /** Leg/points row: open local "today" must not reset streak; after today is logged, include it. */
+    const phase2LegUiDayISO = marksSet.has(today) ? tomorrow : today;
+    let journeyPhase = "phase1";
+    if (programDone) journeyPhase = "done";
+    else if (phase1Satisfied && boundary !== null) journeyPhase = "phase2";
+
+    /** Nominal-rest-window leg counter (calendar Phase 2); null on strict violation. */
+    let nominalLegProgress = null;
+    if (
+      journeyPhase === "phase2" &&
+      boundary !== null &&
+      phase2StartISO &&
+      !(sim && sim.violation)
+    ) {
+      nominalLegProgress = phase2LegProgressFromNominalRests(phase2StartISO, marksSet, today);
+    }
+
+    let longRunLegLabel = null;
+    let longRunLegDetail = null;
+    let longRunLegCounter = null;
+    if (nominalLegProgress) {
+      longRunLegLabel = nominalLegProgress.label;
+      longRunLegCounter = nominalLegProgress.counter;
+      longRunLegDetail = null;
+    }
+
+    let nextRestLabel = "—";
+    let nextHabitLabel = "—";
+    let nextHabitISO = null;
+    let nextRestScheduledISO = null;
     let status = "";
+    const p2StatusPrefix =
+      journeyPhase === "phase2" && longRunLegLabel ? `Phase 2 · ${longRunLegLabel} · ` : "";
+
     if (!phase1Satisfied) {
-      let rawW = weekIndexForDate(h.start, today);
-      let w = rawW;
-      if (w < 0) w = 0;
-      if (w > 6) {
-        let firstShort = -1;
-        for (let i = 0; i < 7; i++) {
-          if (actual[i] < i + 1) {
-            firstShort = i;
-            break;
-          }
-        }
-        w = firstShort >= 0 ? firstShort : 6;
-      }
+      const w = phase1CurrentWeekUiIndex(h.start, today, actual);
       const need = w + 1;
       const incompleteEarlier = [];
       for (let i = 0; i < w; i++) {
@@ -811,21 +1866,43 @@
       status =
         "Phase 2 (Long run): you logged on a required rest day. Fix rests to advance the Long-run bar; Progress bar still reflects your latest streak.";
     } else if (sim) {
-      const r = sim.needRest ? "log a rest day (leave today unchecked)" : `streak ${sim.run}/${sim.targetL}`;
-      status =
-        `Long run: streak target ${sim.targetL}; ${r}. Progress bar uses your latest contiguous streak.`;
+      const projectedRestIso = nextProjectedRestISO(boundary, marksSet, today, h.start);
+      const stEod = stateAtStartOfDayForgiving(boundary, marksSet, phase2LegUiDayISO, h.start);
+      if (stEod.violation) {
+        status =
+          "Phase 2 (Long run): you logged on a required rest day. Fix rests to advance the Long-run bar; Progress bar still reflects your latest streak.";
+      } else if (stEod.beforePhase2) {
+        const firstP2 = addDaysISO(boundary, 1);
+        const stP2 = stateAtStartOfDayForgiving(boundary, marksSet, firstP2, h.start);
+        const t = formatLegLabel(stP2.targetL) || "L8";
+        const mid = stP2.needRest
+          ? `Next Phase 2 calendar day (${formatScheduleDay(firstP2)}) is a mandatory rest.`
+          : `First Phase 2 day ${formatScheduleDay(firstP2)}: long-run streak ${stP2.run}/${stP2.targetL} toward ${t}.`;
+        status = `${p2StatusPrefix}${mid} Progress bar uses your latest contiguous streak.`;
+      } else if (stEod.needRest) {
+        status = `${p2StatusPrefix}${
+          longRunLegDetail ? `${longRunLegDetail}. ` : ""
+        }Leave the next calendar day unchecked (rest). After that rest, the next leg targets ${
+          stEod.targetL + 1
+        } days. Strict Long-run points already banked are kept.`;
+      } else {
+        status = `${p2StatusPrefix}Long run: streak target ${stEod.targetL}; streak ${stEod.run}/${
+          stEod.targetL
+        } (through end of today). Next mandatory rest if you stay on schedule: ${
+          projectedRestIso ? formatScheduleDay(projectedRestIso) : "—"
+        }. Progress bar uses your latest contiguous streak.`;
+      }
     }
 
-    let nextRestLabel = "—";
-    let nextHabitLabel = "—";
-
     if (daysDiff(today, h.start) > 0) {
+      nextHabitISO = h.start;
       nextHabitLabel = `${formatScheduleDay(h.start)} (habit hasn’t started)`;
       nextRestLabel = "— (streak rests start in phase 2)";
     } else if (!phase1Satisfied) {
       const nh = nextHabitDayPhase1(h, actual, h.start, today);
       nextRestLabel = "— (phase 1 has no rest days)";
       if (nh) {
+        nextHabitISO = nh.iso;
         nextHabitLabel = nh.backlog
           ? `${formatScheduleDay(nh.iso)} — log today; remaining days are short of this week's quota`
           : formatScheduleDay(nh.iso);
@@ -840,10 +1917,14 @@
       nextRestLabel = "—";
       nextHabitLabel = "— (fix strict rest violation to use strict next-day hints)";
     } else {
-      const nr = nextRestFromSet(restDays, today);
+      let nr = nextRestFromSet(restDays, today);
+      if (!nr) nr = nextNeedRestStartISO(boundary, marksSet, today, h.start);
+      if (!nr) nr = nextProjectedRestISO(boundary, marksSet, today, h.start);
+      nextRestScheduledISO = nr;
       nextRestLabel = nr ? `${formatScheduleDay(nr)} (leave unchecked)` : "—";
-      const nh = nextHabitDayPhase2(boundary, marksSet, today, programDone);
+      const nh = nextHabitDayPhase2(boundary, marksSet, today, programDone, h.start);
       if (nh) {
+        nextHabitISO = nh;
         nextHabitLabel =
           daysDiff(today, nh) === 0 ? `${formatScheduleDay(nh)} (today)` : formatScheduleDay(nh);
       } else {
@@ -852,6 +1933,47 @@
     }
 
     const pct = Math.min(100, Math.max(0, forgivingPct));
+
+    const phaseSlug =
+      journeyPhase === "done" ? "done" : journeyPhase === "phase2" ? "phase2" : "phase1";
+    let curTarget = null;
+    let curRun = null;
+    if (nominalLegProgress) {
+      curTarget = nominalLegProgress.targetLen;
+      curRun = nominalLegProgress.run;
+    }
+
+    const programState = {
+      phase: phaseSlug,
+      anchor_iso: today,
+      phase1: {
+        actual_per_week: actual.slice(),
+        satisfied: phase1Satisfied,
+        current_week_ui_index: phase1CurrentWeekUiIndex(h.start, today, actual),
+        points_earned: phase1Earned,
+        points_cap: 28,
+      },
+      phase2:
+        boundary !== null && phase2StartISO
+          ? {
+              boundary_iso: boundary,
+              phase2_start_iso: phase2StartISO,
+              nominal_rest_dates: nominalRestISOList.slice(),
+              strict: {
+                violation: Boolean(sim && sim.violation),
+                complete: strictComplete,
+                earned_points: phase2Earned,
+              },
+              forgiving: {
+                points: forgivingPhase2Pts,
+                complete: forgivingComplete,
+              },
+              effective_next_rest_iso: nextRestScheduledISO,
+              current_leg_target_len: curTarget,
+              current_leg_run_start_of_tomorrow: curRun,
+            }
+          : null,
+    };
 
     return {
       phase1Earned,
@@ -871,7 +1993,324 @@
       sim,
       nextRestLabel,
       nextHabitLabel,
+      nextHabitISO,
+      nextRestScheduledISO,
+      journeyPhase,
+      longRunLegLabel,
+      longRunLegDetail,
+      longRunLegCounter,
+      phase1PointsCap: 28,
+      nominalRestDays,
+      nominalRestISOList,
+      programState,
     };
+  }
+
+  function deriveHabitWorknight(h) {
+    const marks = markedDates(h);
+    const marksSet = new Set(marks);
+    const cheatSet = cheatDatesAsSet(h);
+    const cheatFrozenSuns = cheatFrozenSundaySet(h);
+    const { actual, phase1Earned, phase1Satisfied } = phase1StatsWorknight(h.start, marks, cheatSet);
+
+    const boundary = phase1Satisfied ? phase2BoundaryDateWorknight(h.start, marks) : null;
+    const maxISO = maxDerivedScanISO(h, boundary);
+    let phase2Earned = 0;
+    let strictPct = (100 * phase1Earned) / TOTAL_POINTS_WORKNIGHT;
+    let forgivingPct = (100 * phase1Earned) / TOTAL_POINTS_WORKNIGHT;
+    let strictComplete = false;
+    let forgivingPhase2Pts = 0;
+    let forgivingComplete = false;
+    let sim = null;
+    let restDays = new Set();
+
+    if (boundary !== null) {
+      sim = simulatePhase2Worknight(boundary, marksSet, maxISO, cheatFrozenSuns);
+      phase2Earned = sim.phase2Earned;
+      strictComplete = sim.complete;
+      if (!sim.violation) {
+        strictPct = (100 * (phase1Earned + phase2Earned)) / TOTAL_POINTS_WORKNIGHT;
+        if (strictComplete) strictPct = 100;
+      } else {
+        strictPct = (100 * (phase1Earned + phase2Earned)) / TOTAL_POINTS_WORKNIGHT;
+      }
+
+      const f = simulatePhase2ForgivingWorknight(boundary, marksSet);
+      forgivingPhase2Pts = f.forgivingPhase2Pts;
+      forgivingComplete = f.forgivingComplete;
+      forgivingPhase2Pts = Math.max(forgivingPhase2Pts, phase2Earned);
+      forgivingPct = (100 * (phase1Earned + forgivingPhase2Pts)) / TOTAL_POINTS_WORKNIGHT;
+      if (forgivingComplete) forgivingPct = 100;
+
+      restDays = deriveRestDaySetWorknight(boundary, marksSet, cheatFrozenSuns, h.start);
+    }
+
+    const phase2StartISO =
+      boundary !== null ? firstSunThruThuOnOrAfter(addDaysISO(boundary, 1)) : null;
+    const nominalRestISOList = [];
+    const nominalRestDays = new Set();
+
+    const programDone = Boolean(strictComplete || forgivingComplete);
+
+    const today = todayISO();
+    const tomorrow = addDaysISO(today, 1);
+    /** Leg/points row: open local "today" must not reset streak; after today is logged, include it. */
+    const phase2LegUiDayISO = marksSet.has(today) ? tomorrow : today;
+    let journeyPhase = "phase1";
+    if (programDone) journeyPhase = "done";
+    else if (phase1Satisfied && boundary !== null) journeyPhase = "phase2";
+
+    let longRunLegLabel = null;
+    let longRunLegDetail = null;
+    let longRunLegCounter = null;
+    if (journeyPhase === "phase2" && boundary !== null) {
+      const stLeg = stateAtStartOfDayWorknightForgiving(
+        boundary,
+        marksSet,
+        phase2LegUiDayISO,
+        cheatFrozenSuns,
+        h.start
+      );
+      longRunLegCounter = longRunLegCounterFromState(stLeg);
+      if (longRunLegCounter == null && stLeg.beforePhase2) {
+        const fp2 = firstSunThruThuOnOrAfter(addDaysISO(boundary, 1));
+        longRunLegCounter = longRunLegCounterFromState(
+          stateAtStartOfDayWorknightForgiving(boundary, marksSet, fp2, cheatFrozenSuns, h.start)
+        );
+      }
+      const leg = longRunLegFromState(stLeg);
+      longRunLegLabel = leg.label;
+      longRunLegDetail = leg.detail;
+      if (stLeg.violation) {
+        longRunLegLabel = null;
+        longRunLegDetail = null;
+        longRunLegCounter = null;
+      }
+    }
+
+    let status = "";
+    const p2StatusPrefix =
+      journeyPhase === "phase2" && longRunLegLabel ? `Phase 2 · ${longRunLegLabel} · ` : "";
+
+    if (!phase1Satisfied) {
+      const w = phase1CurrentWeekUiIndexWorknight(h.start, today, actual, cheatSet);
+      const need = w + 1;
+      const incompleteEarlier = [];
+      for (let i = 0; i < w; i++) {
+        const n = i + 1;
+        const ok = actual[i] >= n || weekHasCheat(h.start, i, cheatSet);
+        if (!ok) incompleteEarlier.push(`${i + 1} (${actual[i]}/${n})`);
+      }
+      const backlog =
+        incompleteEarlier.length > 0 ? ` · catch up earlier: ${incompleteEarlier.join("; ")}` : "";
+      const freeze = weekHasCheat(h.start, w, cheatSet) ? " · cheat freeze active this week" : "";
+      status = `Week ${w + 1} of 5 · ${actual[w]}/${need} logs (Fri/Sat optional; Sun–Thu set planner pressure)${freeze}${backlog}.`;
+    } else if (boundary === null) {
+      status = "Phase 1 complete (boundary error)";
+    } else if (programDone) {
+      if (forgivingComplete && !strictComplete) {
+        status =
+          "Complete — Progress track (90 work nights or milestones). Long-run ladder may stay below 100%.";
+      } else if (strictComplete) {
+        status = "Complete — Long-run Phase 2 ladder finished (Sun–Thu nights; Fri/Sat skipped).";
+      } else {
+        status = "Complete.";
+      }
+    } else if (sim && sim.violation) {
+      status =
+        "Phase 2 (Long run): you logged on a required rest night. Fix rests to advance the Long-run bar; Progress bar still reflects your latest streak.";
+    } else if (sim) {
+      const projectedRestIso = nextProjectedRestISOWorknight(
+        boundary,
+        marksSet,
+        today,
+        cheatFrozenSuns,
+        h.start
+      );
+      const stEod = stateAtStartOfDayWorknightForgiving(
+        boundary,
+        marksSet,
+        phase2LegUiDayISO,
+        cheatFrozenSuns,
+        h.start
+      );
+      if (stEod.violation) {
+        status =
+          "Phase 2 (Long run): you logged on a required rest night. Fix rests to advance the Long-run bar; Progress bar still reflects your latest streak.";
+      } else if (stEod.beforePhase2) {
+        const firstP2 = firstSunThruThuOnOrAfter(addDaysISO(boundary, 1));
+        const stP2 = stateAtStartOfDayWorknightForgiving(
+          boundary,
+          marksSet,
+          firstP2,
+          cheatFrozenSuns,
+          h.start
+        );
+        const t = formatLegLabel(stP2.targetL) || "L8";
+        const mid = stP2.needRest
+          ? `Next Phase 2 Sun–Thu night (${formatScheduleDay(firstP2)}) is a mandatory rest.`
+          : `First Phase 2 night ${formatScheduleDay(firstP2)}: long-run streak ${stP2.run}/${stP2.targetL} toward ${t}.`;
+        status = `${p2StatusPrefix}${mid}`;
+      } else if (stEod.needRest) {
+        status = `${p2StatusPrefix}${
+          longRunLegDetail ? `${longRunLegDetail}. ` : ""
+        }Leave your next Sun–Thu night unchecked (rest). After that rest, the next leg targets ${
+          stEod.targetL + 1
+        } nights. Strict Long-run points already banked are kept.`;
+      } else {
+        status = `${p2StatusPrefix}Long run: Sun–Thu nights only; target ${stEod.targetL}; streak ${
+          stEod.run
+        }/${stEod.targetL} (through end of today). Next mandatory rest if you stay on schedule: ${
+          projectedRestIso ? formatScheduleDay(projectedRestIso) : "—"
+        }.`;
+      }
+    }
+
+    let nextRestLabel = "—";
+    let nextHabitLabel = "—";
+    let nextHabitISO = null;
+    let nextRestScheduledISO = null;
+
+    if (daysDiff(today, h.start) > 0) {
+      nextHabitISO = h.start;
+      nextHabitLabel = `${formatScheduleDay(h.start)} (habit hasn’t started)`;
+      nextRestLabel = "— (streak rests start in phase 2)";
+    } else if (!phase1Satisfied) {
+      const nh = nextHabitDayPhase1Worknight(h, actual, h.start, today, cheatSet);
+      nextRestLabel = "— (phase 1 has no rest days)";
+      if (nh) {
+        nextHabitISO = nh.iso;
+        nextHabitLabel = nh.backlog
+          ? `${formatScheduleDay(nh.iso)} — log today; Sun–Thu may be short for this week's quota`
+          : formatScheduleDay(nh.iso);
+      }
+    } else if (boundary === null) {
+      nextRestLabel = "—";
+      nextHabitLabel = "—";
+    } else if (programDone) {
+      nextRestLabel = "None (finished)";
+      nextHabitLabel = "None (finished)";
+    } else if (sim && sim.violation) {
+      nextRestLabel = "—";
+      nextHabitLabel = "— (fix strict rest violation to use strict next-day hints)";
+    } else {
+      let nr = nextRestFromSet(restDays, today);
+      if (!nr) nr = nextNeedRestStartISOWorknight(boundary, marksSet, today, cheatFrozenSuns, h.start);
+      if (!nr) nr = nextProjectedRestISOWorknight(boundary, marksSet, today, cheatFrozenSuns, h.start);
+      nextRestScheduledISO = nr;
+      nextRestLabel = nr ? `${formatScheduleDay(nr)} (leave unchecked)` : "—";
+      const nh = nextHabitDayPhase2Worknight(
+        boundary,
+        marksSet,
+        today,
+        programDone,
+        cheatFrozenSuns,
+        h.start
+      );
+      if (nh) {
+        nextHabitISO = nh;
+        nextHabitLabel =
+          daysDiff(today, nh) === 0 ? `${formatScheduleDay(nh)} (today)` : formatScheduleDay(nh);
+      } else {
+        nextHabitLabel = "—";
+      }
+    }
+
+    const pct = Math.min(100, Math.max(0, forgivingPct));
+
+    const phaseSlugWn =
+      journeyPhase === "done" ? "done" : journeyPhase === "phase2" ? "phase2" : "phase1";
+    const stTomorrowWn =
+      boundary !== null
+        ? stateAtStartOfDayWorknightForgiving(
+            boundary,
+            marksSet,
+            phase2LegUiDayISO,
+            cheatFrozenSuns,
+            h.start
+          )
+        : null;
+    let curTargetWn = null;
+    let curRunWn = null;
+    if (stTomorrowWn && journeyPhase === "phase2") {
+      if (!stTomorrowWn.violation) {
+        if (stTomorrowWn.beforePhase2) {
+          curTargetWn = 8;
+          curRunWn = 0;
+        } else {
+          curTargetWn = stTomorrowWn.targetL;
+          curRunWn = stTomorrowWn.run;
+        }
+      }
+    }
+
+    const programState = {
+      phase: phaseSlugWn,
+      anchor_iso: today,
+      phase1: {
+        actual_per_week: actual.slice(),
+        satisfied: phase1Satisfied,
+        current_week_ui_index: phase1CurrentWeekUiIndexWorknight(h.start, today, actual, cheatSet),
+        points_earned: phase1Earned,
+        points_cap: PHASE1_MAX_POINTS_WORKNIGHT,
+      },
+      phase2:
+        boundary !== null && phase2StartISO
+          ? {
+              boundary_iso: boundary,
+              phase2_start_iso: phase2StartISO,
+              nominal_rest_dates: [],
+              strict: {
+                violation: Boolean(sim && sim.violation),
+                complete: strictComplete,
+                earned_points: phase2Earned,
+              },
+              forgiving: {
+                points: forgivingPhase2Pts,
+                complete: forgivingComplete,
+              },
+              effective_next_rest_iso: nextRestScheduledISO,
+              current_leg_target_len: curTargetWn,
+              current_leg_run_start_of_tomorrow: curRunWn,
+            }
+          : null,
+    };
+
+    return {
+      phase1Earned,
+      phase2Earned,
+      forgivingPhase2Pts,
+      pct,
+      strictPct: Math.min(100, Math.max(0, strictPct)),
+      forgivingPct: Math.min(100, Math.max(0, forgivingPct)),
+      strictComplete,
+      forgivingComplete,
+      programDone,
+      status,
+      complete: programDone,
+      boundary,
+      phase1Satisfied,
+      restDays,
+      sim,
+      nextRestLabel,
+      nextHabitLabel,
+      nextHabitISO,
+      nextRestScheduledISO,
+      journeyPhase,
+      longRunLegLabel,
+      longRunLegDetail,
+      longRunLegCounter,
+      phase1PointsCap: PHASE1_MAX_POINTS_WORKNIGHT,
+      nominalRestDays,
+      nominalRestISOList,
+      programState,
+    };
+  }
+
+  function habitListNextLogClause(derived) {
+    if (derived.nextHabitISO) return `Next log: ${derived.nextHabitISO}`;
+    if (derived.programDone) return "Next log: complete";
+    return "Next log: —";
   }
 
   /**
@@ -884,6 +2323,7 @@
   }
 
   function renderList() {
+    closeHabitTypePopover();
     const ul = document.getElementById("habit-list");
     const count = document.getElementById("habit-list-count");
     if (count) count.textContent = `${habits.length} habit${habits.length === 1 ? "" : "s"}`;
@@ -918,17 +2358,34 @@
       if (h.id === selectedId) li.classList.add("active");
       const left = document.createElement("div");
       left.className = "habit-li-main";
+      const titleRow = document.createElement("div");
+      titleRow.className = "habit-li-title-row";
       const titleEl = document.createElement("span");
       titleEl.className = "habit-title";
       titleEl.textContent = h.title || "(untitled)";
+      const gearBtn = document.createElement("button");
+      gearBtn.type = "button";
+      gearBtn.className = "habit-gear-btn";
+      gearBtn.setAttribute("aria-label", "Habit settings");
+      gearBtn.setAttribute("aria-haspopup", "dialog");
+      gearBtn.setAttribute("aria-expanded", "false");
+      gearBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+      gearBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (habitTypePopoverHabitId === h.id) closeHabitTypePopover();
+        else openHabitTypePopover(h.id, gearBtn);
+      });
+      titleRow.appendChild(titleEl);
+      titleRow.appendChild(gearBtn);
+      const d = deriveHabit(h);
       const meta = document.createElement("span");
       meta.className = "muted habit-li-meta";
       const n = markedDates(h).length;
-      meta.textContent = `Start ${h.start} · ${n} day(s) logged`;
-      left.appendChild(titleEl);
+      meta.textContent = `${habitListNextLogClause(d)} · ${n} day(s) logged${isWorknight(h) ? " · Worknight" : ""}`;
+      left.appendChild(titleRow);
       left.appendChild(meta);
       li.appendChild(left);
-      const d = deriveHabit(h);
       const progress = document.createElement("div");
       progress.className = "habit-progress";
       const stack = document.createElement("div");
@@ -988,10 +2445,33 @@
     const detailStart = document.getElementById("detail-start-input");
     detailStart.value = h.start;
     detailStart.disabled = false;
-    detailStart.title =
-      "Phase 1 weeks are Sun–Sat; week 1 is the calendar week that contains this date. Your first log must be this date or later.";
+    detailStart.title = isWorknight(h)
+      ? "Worknight Phase 1: five calendar weeks (Sun–Thu drive deadlines; Fri/Sat optional). Week 1 contains program start."
+      : "Phase 1 weeks are Sun–Sat; week 1 is the calendar week that contains this date. Your first log must be this date or later.";
     const derived = deriveHabit(h);
-    document.getElementById("detail-status").textContent = derived.status;
+    const detailStatusEl = document.getElementById("detail-status");
+    const suppressDetailStatusFlavor =
+      derived.journeyPhase === "phase2" &&
+      !derived.programDone &&
+      !(derived.sim && derived.sim.violation);
+    if (suppressDetailStatusFlavor) {
+      detailStatusEl.textContent = "";
+      detailStatusEl.hidden = true;
+    } else {
+      detailStatusEl.hidden = false;
+      detailStatusEl.textContent = derived.status;
+    }
+    const wnHint = document.getElementById("detail-worknight-hint");
+    if (wnHint) {
+      if (isWorknight(h)) {
+        wnHint.hidden = false;
+        wnHint.textContent =
+          "Worknight: click once to log a night; click twice quickly on the same date for a cheat freeze (blue). Max 2 cheats per rolling 30 days. Phase 2 counts Sun–Thu streaks only (Thu→Sun is consecutive).";
+      } else {
+        wnHint.hidden = true;
+        wnHint.textContent = "";
+      }
+    }
 
     document.getElementById("progress-pct-forgiving").textContent =
       `${formatProgressPct(derived.forgivingPct)}%`;
@@ -1013,22 +2493,62 @@
       row.appendChild(v);
       pointsRoot.appendChild(row);
     }
-    addPtsRow("Phase 1", `${derived.phase1Earned} / 28 pts`);
+    addPtsRow("Phase 1", `${derived.phase1Earned} / ${derived.phase1PointsCap ?? 28} pts`);
     addPtsRow("Phase 2 · Progress track", `${derived.forgivingPhase2Pts} / ${PHASE2_MAX_POINTS} pts`);
-    addPtsRow("Phase 2 · Long-run track", `${derived.phase2Earned} / ${PHASE2_MAX_POINTS} pts`);
+    const longRunLabel =
+      derived.journeyPhase === "phase2" && derived.longRunLegLabel
+        ? derived.longRunLegCounter
+          ? `Phase 2 · Long-run track · ${derived.longRunLegLabel} · ${derived.longRunLegCounter}`
+          : `Phase 2 · Long-run track · ${derived.longRunLegLabel}`
+        : "Phase 2 · Long-run track";
+    addPtsRow(longRunLabel, `${derived.phase2Earned} / ${PHASE2_MAX_POINTS} pts`);
 
     const upcoming = document.getElementById("detail-upcoming");
     upcoming.hidden = false;
     upcoming.replaceChildren();
-    const rowRest = document.createElement("div");
-    const sr = document.createElement("strong");
-    sr.textContent = "Next rest day";
-    rowRest.appendChild(sr);
-    rowRest.appendChild(document.createTextNode(` · ${derived.nextRestLabel}`));
-    upcoming.appendChild(rowRest);
+    const ps = derived.programState;
+    const todayStr = todayISO();
+
+    if (!isWorknight(h) && ps?.phase2?.phase2_start_iso && derived.journeyPhase !== "done") {
+      const rowP2 = document.createElement("div");
+      const sp = document.createElement("strong");
+      sp.textContent = "Phase 2 start";
+      rowP2.appendChild(sp);
+      rowP2.appendChild(
+        document.createTextNode(` · ${formatScheduleDay(ps.phase2.phase2_start_iso)} (Leg 8 day 1)`)
+      );
+      upcoming.appendChild(rowP2);
+    } else if (isWorknight(h) && ps?.phase2?.phase2_start_iso && derived.journeyPhase !== "done") {
+      const rowP2 = document.createElement("div");
+      const sp = document.createElement("strong");
+      sp.textContent = "Phase 2 start";
+      rowP2.appendChild(sp);
+      rowP2.appendChild(
+        document.createTextNode(
+          ` · ${formatScheduleDay(ps.phase2.phase2_start_iso)} (first Sun–Thu night)`
+        )
+      );
+      upcoming.appendChild(rowP2);
+    }
+
+    if (!isWorknight(h) && ps?.phase2?.nominal_rest_dates?.length) {
+      const nom = ps.phase2.nominal_rest_dates;
+      const upcomingNom = nom.filter((iso) => daysDiff(todayStr, iso) >= 0).slice(0, 1);
+      if (upcomingNom.length) {
+        const rowNom = document.createElement("div");
+        const hn = document.createElement("strong");
+        hn.textContent = "Next Rest";
+        rowNom.appendChild(hn);
+        rowNom.appendChild(
+          document.createTextNode(` · ${formatScheduleDay(upcomingNom[0])}`)
+        );
+        upcoming.appendChild(rowNom);
+      }
+    }
+
     const rowHabit = document.createElement("div");
     const sh = document.createElement("strong");
-    sh.textContent = "Next day to log habit (latest deadline)";
+    sh.textContent = "Next Day";
     rowHabit.appendChild(sh);
     rowHabit.appendChild(document.createTextNode(` · ${derived.nextHabitLabel}`));
     upcoming.appendChild(rowHabit);
@@ -1041,6 +2561,13 @@
     const first = new Date(viewYear, viewMonth, 1);
     const label = document.getElementById("cal-label");
     label.textContent = first.toLocaleString(undefined, { month: "long", year: "numeric" });
+
+    const legDef = document.getElementById("cal-legend-default");
+    const legWn = document.getElementById("cal-legend-worknight");
+    if (legDef && legWn) {
+      legDef.hidden = isWorknight(h);
+      legWn.hidden = !isWorknight(h);
+    }
 
     const root = document.getElementById("cal-root");
     root.innerHTML = "";
@@ -1067,9 +2594,47 @@
       if (done) cell.classList.add("done");
       const beforeStart = daysDiff(h.start, iso) < 0;
       if (beforeStart) cell.classList.add("before-start");
-      if (derived.restDays.has(iso) && !done) cell.classList.add("rest-block");
+      if (h.cheat_days && h.cheat_days[iso]) cell.classList.add("cheat-freeze");
+      const effectiveRest =
+        !done && (derived.restDays.has(iso) || iso === derived.nextRestScheduledISO);
+      const nominalOnly =
+        !done &&
+        !effectiveRest &&
+        derived.nominalRestDays &&
+        derived.nominalRestDays.has(iso);
+      if (effectiveRest) cell.classList.add("rest-effective");
+      else if (nominalOnly) cell.classList.add("rest-nominal");
+      let cellQuickTimer = null;
       cell.addEventListener("click", () => {
         if (beforeStart) return;
+        if (isWorknight(h)) {
+          if (cellQuickTimer) {
+            clearTimeout(cellQuickTimer);
+            cellQuickTimer = null;
+            if (!h.cheat_days) h.cheat_days = {};
+            if (h.cheat_days[iso]) {
+              delete h.cheat_days[iso];
+            } else if (cheatCountRolling30Ending(h, iso) >= 2) {
+              setStorageStatus(false, "Worknight cheat freezes: max 2 per rolling 30 days.");
+            } else {
+              h.cheat_days[iso] = true;
+            }
+            save();
+            render();
+            return;
+          }
+          cellQuickTimer = setTimeout(() => {
+            cellQuickTimer = null;
+            const turningOn = !h.days[iso];
+            const check = canToggleDay(h, iso, deriveHabit(h), turningOn);
+            if (!check.ok) return;
+            if (h.days[iso]) delete h.days[iso];
+            else h.days[iso] = true;
+            save();
+            render();
+          }, 300);
+          return;
+        }
         const turningOn = !h.days[iso];
         const check = canToggleDay(h, iso, deriveHabit(h), turningOn);
         if (!check.ok) return;
@@ -1118,7 +2683,7 @@
     if (!title) return;
     const startEl = document.getElementById("start-input");
     const startVal = (startEl.value && startEl.value.trim()) || todayISO();
-    const h = { id: uuid(), title, start: startVal, days: {} };
+    const h = { id: uuid(), title, start: startVal, days: {}, habit_type: "default", cheat_days: {} };
     habits.push(h);
     selectedId = h.id;
     inp.value = "";

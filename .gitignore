@@ -57,6 +57,7 @@ models/
 
 # Logs / scratch
 *.log
+scripts/.scheduler-stack/
 
 # Jupyter
 .ipynb_checkpoints/

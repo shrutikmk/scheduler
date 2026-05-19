@@ -193,7 +193,10 @@ def test_status_change_marks_dirty(store: SchedulerStore) -> None:
 
 def _mgr(tmp_path: Path, store: SchedulerStore) -> CalendarSyncManager:
     secrets = tmp_path / "client.json"
-    secrets.write_text('{"installed":{}}', encoding="utf-8")
+    secrets.write_text(
+        '{"installed":{"client_id":"abc","client_secret":"xyz"}}',
+        encoding="utf-8",
+    )
     token = tmp_path / "oauth-token.json"
     token.write_text("{}", encoding="utf-8")
     return CalendarSyncManager(
@@ -201,6 +204,7 @@ def _mgr(tmp_path: Path, store: SchedulerStore) -> CalendarSyncManager:
         client_secrets_path=secrets,
         token_path=token,
         local_tz_name="America/Chicago",
+        oauth_redirect_uri="http://127.0.0.1:8765/api/calendar/oauth/callback",
     )
 
 
@@ -226,7 +230,7 @@ def test_sync_once_creates_event_and_marks_clean(
     list_page = {"items": [], "nextSyncToken": "sync-1"}
     with (
         patch.object(
-            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None)
+            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None, None)
         ),
         patch("google_calendar_sync.insert_event", side_effect=fake_insert),
         patch("google_calendar_sync.list_events_page", return_value=list_page),
@@ -260,7 +264,7 @@ def test_sync_once_push_uses_persisted_client_tz(tmp_path: Path, store: Schedule
     list_page = {"items": [], "nextSyncToken": "sync-la"}
     with (
         patch.object(
-            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None)
+            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None, None)
         ),
         patch("google_calendar_sync.insert_event", side_effect=fake_insert),
         patch("google_calendar_sync.list_events_page", return_value=list_page),
@@ -288,7 +292,7 @@ def test_sync_once_deletes_when_soft_deleted(tmp_path: Path, store: SchedulerSto
     list_page = {"items": [], "nextSyncToken": "tok"}
     with (
         patch.object(
-            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None)
+            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None, None)
         ),
         patch("google_calendar_sync.delete_event", side_effect=fake_delete),
         patch("google_calendar_sync.list_events_page", return_value=list_page),
@@ -315,7 +319,7 @@ def test_sync_once_pulls_new_event_from_calendar(
     list_page = {"items": [pulled], "nextSyncToken": "tok"}
     with (
         patch.object(
-            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None)
+            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None, None)
         ),
         patch("google_calendar_sync.list_events_page", return_value=list_page),
     ):
@@ -330,7 +334,7 @@ def test_sync_once_records_oauth_failure(tmp_path: Path, store: SchedulerStore) 
     mgr = _mgr(tmp_path, store)
     store.set_gcal_sync_state(calendar_id="primary", enabled=True)
     with patch.object(
-        CalendarSyncManager, "silent_credentials", return_value=(None, "need_browser")
+        CalendarSyncManager, "silent_credentials", return_value=(None, "need_browser", None)
     ):
         out = mgr.sync_once()
     assert any("oauth" in e for e in out.errors)
@@ -367,7 +371,7 @@ def test_delete_all_calendar_events_filters_by_local_day(
 
     with (
         patch.object(
-            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None)
+            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None, None)
         ),
         patch("google_calendar_sync.list_events_page", return_value=page),
         patch("google_calendar_sync.delete_event", side_effect=fake_delete),
@@ -377,6 +381,58 @@ def test_delete_all_calendar_events_filters_by_local_day(
     assert errs == []
     assert removed == 1
     assert deletes == ["on-day"]
+
+
+def test_begin_browser_oauth_returns_authorization_url(
+    tmp_path: Path, store: SchedulerStore
+) -> None:
+    mgr = _mgr(tmp_path, store)
+    with patch(
+        "google_calendar_client.create_installed_app_flow",
+        return_value=object(),
+    ), patch(
+        "google_calendar_client.oauth_authorization_url",
+        return_value=("https://accounts.google.com/o/oauth2/auth?x=1", "state-123"),
+    ):
+        payload = mgr.begin_browser_oauth()
+    assert payload["authorization_url"].startswith("https://accounts.google.com/")
+    assert payload["state"] == "state-123"
+
+
+def test_complete_browser_oauth_rejects_unknown_state(
+    tmp_path: Path, store: SchedulerStore
+) -> None:
+    mgr = _mgr(tmp_path, store)
+    with pytest.raises(ValueError, match="expired or unknown"):
+        mgr.complete_browser_oauth(
+            "http://127.0.0.1:8765/api/calendar/oauth/callback?code=abc&state=missing"
+        )
+
+
+def test_complete_browser_oauth_persists_token(
+    tmp_path: Path, store: SchedulerStore
+) -> None:
+    mgr = _mgr(tmp_path, store)
+    fake_flow = object()
+    fake_creds = type("C", (), {"to_json": lambda self: '{"token":"saved"}'})()
+
+    with patch(
+        "google_calendar_client.create_installed_app_flow",
+        return_value=fake_flow,
+    ), patch(
+        "google_calendar_client.oauth_authorization_url",
+        return_value=("https://accounts.google.com/o/oauth2/auth?x=1", "state-abc"),
+    ):
+        mgr.begin_browser_oauth()
+
+    with patch(
+        "google_calendar_client.oauth_exchange_code",
+        return_value=fake_creds,
+    ), patch("google_calendar_client.persist_credentials") as persist:
+        mgr.complete_browser_oauth(
+            "http://127.0.0.1:8765/api/calendar/oauth/callback?code=abc&state=state-abc"
+        )
+        persist.assert_called_once()
 
 
 def test_delete_all_calendar_events_skips_when_sync_off(

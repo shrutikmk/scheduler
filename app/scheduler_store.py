@@ -434,6 +434,140 @@ class SchedulerStore:
             cn.commit()
         return len(new_rows)
 
+    def merge_tasks_from_assistant(self, dates: list[str], new_rows: list[ScheduleRow]) -> int:
+        """Merge assistant timetable rows into existing days without wiping unrelated tasks.
+
+        Upserts by ``(plan_date, start_label, title)``. Preserves ``gcal_event_id`` when the
+        key matches. Local-only rows at the same start time may be superseded when the assistant
+        places a different title in that slot. Rows with a Calendar link or omitted by the
+        assistant are not removed.
+        """
+        import time
+
+        if not dates or not new_rows:
+            return 0
+        uniq = sorted(set(dates))
+        now = int(time.time() * 1000)
+        with self._lock:
+            cn = self._connection()
+            existing = cn.execute(
+                f"""
+                SELECT task_id, plan_date, start_label, title, duration_minutes, status,
+                       gcal_event_id, gcal_etag, gcal_calendar_id
+                FROM schedule_tasks
+                WHERE plan_date IN ({",".join(["?"] * len(uniq))})
+                  AND COALESCE(gcal_deleted, 0) = 0
+                """,
+                uniq,
+            ).fetchall()
+            link_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+            for r in existing:
+                key = (
+                    str(r["plan_date"]),
+                    str(r["start_label"]).strip().lower(),
+                    str(r["title"]).strip().lower(),
+                )
+                link_by_key[key] = dict(r)
+
+            new_keys: set[tuple[str, str, str]] = {
+                (r.plan_date, r.start_label.strip().lower(), r.title.strip().lower())
+                for r in new_rows
+            }
+
+            incoming_titles_by_start: dict[tuple[str, str], set[str]] = {}
+            for r in new_rows:
+                sk = (r.plan_date, r.start_label.strip().lower())
+                incoming_titles_by_start.setdefault(sk, set()).add(r.title.strip().lower())
+
+            superseded_ids: list[str] = []
+            for r in existing:
+                gcal_id = r["gcal_event_id"]
+                if gcal_id is not None and str(gcal_id).strip():
+                    continue
+                pd = str(r["plan_date"])
+                st = str(r["start_label"]).strip().lower()
+                title = str(r["title"]).strip().lower()
+                key = (pd, st, title)
+                if key in new_keys:
+                    continue
+                slot_titles = incoming_titles_by_start.get((pd, st))
+                if not slot_titles:
+                    continue
+                if title not in slot_titles and slot_titles:
+                    superseded_ids.append(str(r["task_id"]))
+
+            if superseded_ids:
+                cn.execute(
+                    f"""
+                    UPDATE schedule_tasks
+                    SET gcal_deleted = 1, gcal_dirty = 1, updated_at = ?
+                    WHERE task_id IN ({",".join(["?"] * len(superseded_ids))})
+                    """,
+                    [now, *superseded_ids],
+                )
+
+            removable_ids = [
+                str(prior["task_id"])
+                for key, prior in link_by_key.items()
+                if key in new_keys
+            ]
+            if removable_ids:
+                cn.execute(
+                    f"DELETE FROM schedule_tasks WHERE task_id IN "
+                    f"({','.join(['?'] * len(removable_ids))})",
+                    removable_ids,
+                )
+
+            for r in new_rows:
+                key = (
+                    r.plan_date,
+                    r.start_label.strip().lower(),
+                    r.title.strip().lower(),
+                )
+                prior = link_by_key.get(key)
+                task_id = str(prior["task_id"]) if prior else r.task_id
+                gcal_id = prior["gcal_event_id"] if prior else r.gcal_event_id
+                gcal_etag = prior["gcal_etag"] if prior else r.gcal_etag
+                gcal_cal = prior["gcal_calendar_id"] if prior else r.gcal_calendar_id
+                cn.execute(
+                    """
+                    INSERT INTO schedule_tasks (
+                      task_id, plan_date, start_label, duration_minutes, title,
+                      status, created_at, updated_at,
+                      gcal_event_id, gcal_etag, gcal_calendar_id, gcal_dirty, gcal_deleted
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,0)
+                    ON CONFLICT(task_id) DO UPDATE SET
+                      plan_date = excluded.plan_date,
+                      start_label = excluded.start_label,
+                      duration_minutes = excluded.duration_minutes,
+                      title = excluded.title,
+                      status = excluded.status,
+                      updated_at = excluded.updated_at,
+                      gcal_event_id = excluded.gcal_event_id,
+                      gcal_etag = excluded.gcal_etag,
+                      gcal_calendar_id = excluded.gcal_calendar_id,
+                      gcal_dirty = 1,
+                      gcal_deleted = 0
+                    """,
+                    (
+                        task_id,
+                        r.plan_date,
+                        r.start_label,
+                        r.duration_minutes,
+                        r.title,
+                        r.status,
+                        now,
+                        now,
+                        gcal_id,
+                        gcal_etag,
+                        gcal_cal,
+                    ),
+                )
+
+            self._purge_unsynced_deleted_locked(cn)
+            cn.commit()
+        return len(new_rows)
+
     def _purge_unsynced_deleted_locked(self, cn: sqlite3.Connection) -> None:
         """Drop soft-deleted rows that were never pushed to GCal (no event id)."""
         cn.execute(
@@ -890,7 +1024,10 @@ def tasks_to_persist_facts_block(
     return (
         "[Persisted — tasks already saved in the planner database from earlier turns]\n"
         + "\n".join(parts)
-        + "\n\nKeep these in sync: add/update/remove bullets if the user's message implies changes."
+        + "\n\nKeep these in sync: add or update bullets when the user asks; **reschedule** flexible "
+        "items around conflicts instead of dropping them. Only omit a listed task if the user "
+        "cancels or skips it. For future calendar days, prefix each bullet with `[YYYY-MM-DD]` "
+        "before `[TIME]`."
     )
 
 

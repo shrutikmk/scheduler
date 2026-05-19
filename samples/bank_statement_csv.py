@@ -818,6 +818,10 @@ def llm_digest_payload(
         lines.append(f"Date filter (inclusive): {dr_start or '…'} — {dr_end or '…'}")
     if mode == "aggregate" and contrib:
         lines.append(f"Source CSVs (deduplicated ledger): {contrib}")
+    lines.append(
+        "When interpreting payees: if the system prompt includes User spend knowledge, "
+        "use it only to explain names that match rows below (do not invent activity)."
+    )
     lines.extend(
         [
             f"File label: {summary.get('filename', '')}",
@@ -900,7 +904,7 @@ def llm_digest_payload(
     oo = summary.get("top_outflows") or []
     if oo:
         lines.append("Top outflows by merchant/description (negative totals = cash leaving):")
-        for m in oo[:8]:
+        for m in oo[:12]:
             lines.append(f"  - {m.get('label', '')}: {m.get('total')} ({m.get('count')} tx)")
     tm = summary.get("top_merchants") or []
     lines.append("Top merchants by magnitude (signed; includes credits):")
@@ -911,7 +915,7 @@ def llm_digest_payload(
     for c in cats[:8]:
         lines.append(f"  - {c.get('name')}: {c.get('total')} ({c.get('count')} tx)")
     txs = summary.get("transactions") or []
-    sample = [t for t in txs if t.get("amount") not in (None, 0)][:24]
+    sample = [t for t in txs if t.get("amount") not in (None, 0)][:40]
     lines.append("Sample transactions:")
     for t in sample:
         lines.append(

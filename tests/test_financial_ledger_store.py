@@ -234,6 +234,7 @@ def test_build_insights_cache_key_stable_for_reordered_fps() -> None:
         date_end="2026-01-31",
         exclude_sav_brk=False,
         transaction_fingerprints=["bbb", "aaa"],
+        insights_context_hash="",
     )
     k2 = build_insights_cache_key(
         view_mode="aggregate",
@@ -242,9 +243,24 @@ def test_build_insights_cache_key_stable_for_reordered_fps() -> None:
         date_end="2026-01-31",
         exclude_sav_brk=False,
         transaction_fingerprints=["aaa", "bbb"],
+        insights_context_hash="",
     )
     assert k1 == k2
     assert len(k1) == 64
+
+
+def test_build_insights_cache_key_differs_when_insights_context_hash_differs() -> None:
+    base_kw = dict(
+        view_mode="aggregate",
+        snapshot_file=None,
+        date_start="2026-01-01",
+        date_end="2026-01-31",
+        exclude_sav_brk=False,
+        transaction_fingerprints=["fp1"],
+    )
+    a = build_insights_cache_key(**base_kw, insights_context_hash="aaa")
+    b = build_insights_cache_key(**base_kw, insights_context_hash="bbb")
+    assert a != b
 
 
 def test_insights_cache_roundtrip(tmp_path: Path) -> None:
@@ -259,6 +275,7 @@ def test_insights_cache_roundtrip(tmp_path: Path) -> None:
             date_end=None,
             exclude_sav_brk=True,
             transaction_fingerprints=["fp1"],
+            insights_context_hash="",
         )
         iid = insights_cache_store(
             conn,

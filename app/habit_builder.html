@@ -46,7 +46,7 @@
       <input type="text" id="title-input" placeholder="Habit title" maxlength="120" />
       <label class="start-label"
         >Start
-        <input type="date" id="start-input" aria-label="Program start date (day 0 of week 1)" /></label
+        <input type="date" id="start-input" aria-label="Program start date (week 1 is the Sunday–Saturday week containing this date)" /></label
       >
       <button type="button" id="add-habit" class="primary-button">Add</button>
     </div>
@@ -82,6 +82,7 @@
       <summary>Program progress</summary>
       <div class="section-body">
         <div id="detail-status" class="muted detail-status-line"></div>
+        <p id="detail-worknight-hint" class="muted detail-status-line" hidden></p>
         <div class="dual-bar-wrap">
           <div class="bar-row">
             <span class="bar-caption">Progress</span>
@@ -112,6 +113,17 @@
           <button type="button" id="cal-next" aria-label="Next month">→</button>
         </div>
         <div class="cal-grid" id="cal-root"></div>
+        <p class="cal-legend muted" id="cal-legend-default">
+          <span class="cal-legend-swatch rest-effective" aria-hidden="true"></span>
+          Effective mandatory rest (from your logged streak + planner hints)
+          <span class="cal-legend-gap"></span>
+          <span class="cal-legend-swatch rest-nominal" aria-hidden="true"></span>
+          Nominal rest (on-time schedule from Phase&nbsp;2 start; advisory if you’re ahead or behind)
+        </p>
+        <p class="cal-legend muted" id="cal-legend-worknight" hidden>
+          Highlighted nights match mandatory rests on the long-run ladder (Sun–Thu). Nominal pre-scheduled rests apply to
+          calendar habits only.
+        </p>
       </div>
     </details>
   </div>
@@ -123,8 +135,14 @@
       start; week <em>k</em> needs <em>k</em> logged days anywhere that week (only on/after your start date counts).
       After Phase 1, <strong>two Phase 2 models</strong> run in parallel: <strong>Progress</strong> (accent bar)
       milestones 8→90 can be “packed” into your <em>latest</em> contiguous streak; any <strong>90-day</strong> streak in
-      Phase 2 completes the program on that path. <strong>Long run</strong> (green bar) is the original ladder with required
-      rest days between streaks — same rules the day planner deadlines use for streak requirements. Overall
+      Phase 2 completes the program on that path.       <strong>Long run</strong> (green bar) is the original ladder with required
+      rest days between streaks — same rules the day planner deadlines use for streak requirements.
+      In details, each long-run <strong>leg</strong> is labeled <strong>L8</strong>, <strong>L9</strong>, …
+      <strong>L90</strong>: the number is how many consecutive days (or Sun–Thu work nights) that segment
+      needs before the next mandatory blank day.
+      The calendar shows <strong>nominal</strong> rest days from your Phase&nbsp;2 start as a guide when following the ladder exactly;
+      <strong>effective</strong> rests (from your logs + planner hints) override how cells are highlighted when they differ.
+      Overall
       <strong>complete</strong> when either path reaches 100%. 100% points = 4095 total. Your habits are written to
       IndexedDB after every change and mirrored to localStorage for recovery. Data stay on this device only.
     </p>

@@ -6,8 +6,10 @@ import habit_schedule as habit_schedule
 from day_scheduler_web import augment_chat_payload
 from habit_schedule import (
     _phase2_status_for_target,
+    derive_habit_program_state,
     habits_snapshot_with_required_rows,
     latest_phase1_deadline_iso,
+    nominal_phase2_rest_dates,
     non_required_habits_context_block,
     required_habits_context_block,
     required_habits_for_date,
@@ -15,13 +17,87 @@ from habit_schedule import (
 from scheduler_store import SchedulerStore
 
 
-def habit(title: str, start: str, days: dict[str, bool] | None = None) -> dict:
-    return {
+def habit(
+    title: str,
+    start: str,
+    days: dict[str, bool] | None = None,
+    *,
+    duration_minutes: int | None = None,
+    habit_type: str | None = None,
+    cheat_days: dict[str, bool] | None = None,
+) -> dict:
+    h = {
         "id": title.lower().replace(" ", "-"),
         "title": title,
         "start": start,
         "days": days or {},
     }
+    if duration_minutes is not None:
+        h["duration_minutes"] = duration_minutes
+    if habit_type is not None:
+        h["habit_type"] = habit_type
+    if cheat_days is not None:
+        h["cheat_days"] = cheat_days
+    return h
+
+
+def _worknight_phase1_minimal_days(start_iso: str) -> dict[str, bool]:
+    """Minimal Sun–Thu-heavy marks so Worknight Phase 1 completes (5 weeks)."""
+    out: dict[str, bool] = {}
+    start_d = date.fromisoformat(start_iso)
+    sun0 = start_d - timedelta(days=(start_d.weekday() + 1) % 7)
+    for w in range(5):
+        need = w + 1
+        added = 0
+        for delta in range(7):
+            d = sun0 + timedelta(days=w * 7 + delta)
+            if d < start_d:
+                continue
+            out[d.isoformat()] = True
+            added += 1
+            if added >= need:
+                break
+    return out
+
+
+def test_worknight_phase1_requires_sun_thru_thu_but_not_sat() -> None:
+    snap = {"habits": [habit("Sleep", "2026-05-04", {}, habit_type="worknight")]}
+    thu = required_habits_for_date(snap, "2026-05-07")
+    assert len(thu) == 1
+    assert required_habits_for_date(snap, "2026-05-09") == []
+
+
+def test_worknight_phase2_adjacent_thu_sun_run() -> None:
+    from habit_schedule import _max_phase2_run_length_worknight, _phase2_boundary_date_worknight
+
+    start = "2026-05-03"
+    days = _worknight_phase1_minimal_days(start)
+    marks_list = sorted(days.keys())
+    boundary = _phase2_boundary_date_worknight(start, marks_list)
+    assert boundary is not None
+    marks = set(marks_list) | {"2026-06-11", "2026-06-14"}
+    assert _max_phase2_run_length_worknight(boundary, marks) >= 2
+
+
+def test_worknight_phase2_not_required_on_saturday() -> None:
+    from habit_schedule import _phase2_boundary_date_worknight
+
+    start = "2026-05-03"
+    days = _worknight_phase1_minimal_days(start)
+    boundary = _phase2_boundary_date_worknight(start, sorted(days.keys()))
+    assert boundary is not None
+    snap = {
+        "habits": [
+            {
+                "id": "wn",
+                "title": "WN",
+                "start": start,
+                "days": days,
+                "habit_type": "worknight",
+            }
+        ]
+    }
+    assert required_habits_for_date(snap, "2026-06-13") == []
 
 
 def test_habits_snapshot_with_required_rows_matches_required_list() -> None:
@@ -55,6 +131,7 @@ def test_phase1_last_eligible_day_required() -> None:
     reqs = required_habits_for_date(snapshot, "2026-05-09")
     assert len(reqs) == 1
     assert reqs[0].title == "10k steps"
+    assert reqs[0].duration_minutes == 60
     assert "phase 1 week 1/7" in reqs[0].reason
 
 
@@ -94,6 +171,27 @@ def test_required_habits_context_block() -> None:
     assert "[Required habits" in block
     assert "10k steps" in block
     assert "must schedule" in block
+    assert "1h00m" in block
+
+
+def test_steps_goal_infers_about_one_hour_when_duration_omitted() -> None:
+    snapshot = {"habits": [habit("12 k steps", "2026-05-03")]}
+    reqs = required_habits_for_date(snapshot, "2026-05-09")
+    assert reqs[0].duration_minutes == 72
+
+
+def test_explicit_duration_overrides_steps_inference() -> None:
+    snapshot = {"habits": [habit("10k steps", "2026-05-03", duration_minutes=45)]}
+    reqs = required_habits_for_date(snapshot, "2026-05-09")
+    assert reqs[0].duration_minutes == 45
+
+
+def test_non_steps_habit_uses_generic_default_when_duration_omitted() -> None:
+    days = phase1_completed_days("2026-01-04")
+    snapshot = {"habits": [habit("Practice piano", "2026-01-04", days)]}
+    reqs = required_habits_for_date(snapshot, "2026-02-22")
+    assert len(reqs) == 1
+    assert reqs[0].duration_minutes == habit_schedule.DEFAULT_HABIT_MINUTES
 
 
 def test_required_habits_injected_into_chat_payload(tmp_path) -> None:
@@ -229,6 +327,7 @@ def test_non_required_block_handles_phase2_rest_day() -> None:
     assert block is not None
     assert "REST day on 2026-03-02" in block
     assert "Resumes 2026-03-03" in block
+    assert "Nominal next mandatory rest (on-time schedule): 2026-03-02" in block
 
 
 def test_non_required_block_injected_alongside_required(tmp_path) -> None:
@@ -311,6 +410,78 @@ def test_required_habits_empty_when_forgiving_ninety_complete() -> None:
         days[(first_p2 + timedelta(days=i)).isoformat()] = True
     snap = {"habits": [habit("Run90", "2026-01-04", days)]}
     assert required_habits_for_date(snap, "2026-12-01") == []
+
+
+def test_nominal_phase2_rest_dates_count_first_second() -> None:
+    start = "2026-06-01"
+    rests = nominal_phase2_rest_dates(start)
+    assert len(rests) == habit_schedule.PHASE2_NOMINAL_REST_DAY_COUNT == 83
+    assert rests[0] == "2026-06-09"
+    assert rests[1] == "2026-06-19"
+
+
+def test_nominal_phase2_rest_dates_invalid_returns_empty() -> None:
+    assert nominal_phase2_rest_dates("") == []
+    assert nominal_phase2_rest_dates("not-a-date") == []
+
+
+def test_derive_habit_program_state_calendar_phase2_has_nominals() -> None:
+    days = phase1_completed_days("2026-01-04")
+    h = habit("Piano", "2026-01-04", days)
+    st = derive_habit_program_state(h, anchor_iso="2026-03-01")
+    assert st["phase"] == "phase2"
+    assert st["phase2"] is not None
+    assert st["phase2"]["phase2_start_iso"] == "2026-02-22"
+    nom = st["phase2"]["nominal_rest_dates"]
+    assert len(nom) == habit_schedule.PHASE2_NOMINAL_REST_DAY_COUNT
+    assert nom[0] == "2026-03-02"
+
+
+def test_derive_habit_program_state_phase2_leg_run_open_today_not_reset() -> None:
+    """Nominal-rest window: first Phase 2 day logged; anchor next calendar day → leg row 1/8."""
+    days = phase1_completed_days("2026-01-04")
+    days["2026-02-22"] = True
+    h = habit("LegUi", "2026-01-04", days)
+    st = derive_habit_program_state(h, anchor_iso="2026-02-23")
+    assert st["phase"] == "phase2"
+    p2 = st["phase2"]
+    assert p2 is not None
+    assert p2["current_leg_target_len"] == 8
+    assert p2["current_leg_run_start_of_tomorrow"] == 1
+
+
+def test_phase2_leg_progress_nominal_may_first_day_logged() -> None:
+    p2 = "2026-05-17"
+    marks = {"2026-05-17"}
+    assert habit_schedule._phase2_leg_progress_from_nominal_rests(p2, marks, "2026-05-18") == (1, 8)
+
+
+def test_phase2_leg_progress_nominal_full_leg_on_rest_day() -> None:
+    p2 = "2026-05-17"
+    marks = {(date(2026, 5, 17) + timedelta(days=i)).isoformat() for i in range(8)}
+    assert habit_schedule._phase2_leg_progress_from_nominal_rests(p2, marks, "2026-05-25") == (8, 8)
+
+
+def test_phase2_leg_progress_nominal_second_leg_empty() -> None:
+    p2 = "2026-05-17"
+    marks = {(date(2026, 5, 17) + timedelta(days=i)).isoformat() for i in range(8)}
+    assert habit_schedule._phase2_leg_progress_from_nominal_rests(p2, marks, "2026-05-26") == (0, 9)
+
+
+def test_phase2_leg_progress_nominal_prelogged_next_leg_advances_while_rest_today() -> None:
+    """Today on rest day but next-leg day already marked → show L9 progress."""
+    p2 = "2026-05-17"
+    marks = {(date(2026, 5, 17) + timedelta(days=i)).isoformat() for i in range(8)} | {"2026-05-26"}
+    assert habit_schedule._phase2_leg_progress_from_nominal_rests(p2, marks, "2026-05-25") == (1, 9)
+
+
+def test_forgiving_phase2_nineteen_consecutive_days_from_phase2_start() -> None:
+    boundary = "2026-06-01"
+    d0 = date.fromisoformat("2026-06-02")
+    marks = {(d0 + timedelta(days=i)).isoformat() for i in range(19)}
+    pts, done = habit_schedule._forgiving_phase2_points_and_complete(boundary, marks)
+    assert pts == 19
+    assert not done
 
 
 def test_phase2_status_complete_when_forgiving_ninety_done() -> None:

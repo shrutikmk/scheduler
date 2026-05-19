@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import threading
@@ -120,13 +121,38 @@ from financial_analytics_ui import (  # noqa: E402
     financial_dispatch_get,
     financial_dispatch_post,
 )
-from google_calendar_client import (  # noqa: E402
+from google_calendar_client import (
+    allow_oauth_insecure_transport_for_loopback,
     default_calendar_oauth_client_secrets_path,
+    oauth_redirect_uri,
 )
 
 DEFAULT_UPSTREAM_LLM_API = (
     os.environ.get("MLX_SCHEDULER_LLM_API", "http://127.0.0.1:8766").strip().rstrip("/")
 )
+
+
+def _gcal_oauth_result_html(*, ok: bool, error: str = "") -> bytes:
+    message = "Google Calendar connected. You can close this window." if ok else (
+        error or "Google Calendar connection failed."
+    )
+    err_json = json.dumps(error)
+    ok_json = "true" if ok else "false"
+    body = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Google Calendar</title></head>
+<body><p>{message}</p>
+<script>
+(function() {{
+  var payload = {{ type: "gcal-oauth", ok: {ok_json}, error: {err_json} }};
+  try {{
+    if (window.opener && !window.opener.closed) {{
+      window.opener.postMessage(payload, window.location.origin);
+    }}
+  }} catch (e) {{}}
+  setTimeout(function() {{ try {{ window.close(); }} catch (_) {{}} }}, 700);
+}})();
+</script></body></html>"""
+    return body.encode("utf-8")
 
 
 def persist_client_tz_from_payload(store: SchedulerStore, payload: dict[str, Any] | None) -> None:
@@ -224,8 +250,44 @@ def invalidate_upstream_health_cache(origin: str | None = None) -> None:
             _health_cache.pop(origin, None)
 
 
+def _planner_ui_focus_block(
+    *, clock_anchor_iso: str, planner_focus_iso: str | None
+) -> str | None:
+    if not isinstance(planner_focus_iso, str) or not planner_focus_iso.strip():
+        return None
+    focus = planner_focus_iso.strip()
+    if focus == clock_anchor_iso.strip():
+        return None
+    return (
+        "[Facts — planner UI]\n"
+        f"- The user is viewing **{focus}** in the planner agenda (not necessarily today).\n"
+        f"- Default undated timetable bullets and primary planning to **{focus}** unless the "
+        "message clearly targets another calendar day."
+    )
+
+
+def filter_assistant_import_dates(
+    touched: list[str],
+    *,
+    client_clock_date: str | None,
+    client_local_date: str | None,
+) -> list[str]:
+    """Drop clock-anchor day from import when the primary plan day is in the future."""
+    if not touched:
+        return []
+    clock = (client_clock_date or "").strip()
+    primary = (client_local_date or "").strip()
+    if clock and primary and primary > clock:
+        return [d for d in touched if d != clock]
+    return list(touched)
+
+
 def _persisted_block_for_calendar(
-    store: SchedulerStore, *, anchor_iso: str, user_raw: str
+    store: SchedulerStore,
+    *,
+    anchor_iso: str,
+    user_raw: str,
+    planner_focus_iso: str | None = None,
 ) -> str | None:
     from schedule_parse import infer_planner_date_hints
 
@@ -238,6 +300,8 @@ def _persisted_block_for_calendar(
     hinted: set[str] = set(infer_planner_date_hints(user_raw, anchor_date_iso=anchor_iso))
     hinted.add(anchor_iso)
     hinted.add((base_d + timedelta(days=1)).isoformat())
+    if isinstance(planner_focus_iso, str) and planner_focus_iso.strip():
+        hinted.add(planner_focus_iso.strip())
 
     rows_by: dict[str, list[ScheduleRow]] = {}
     for day in sorted(hinted):
@@ -278,16 +342,29 @@ def augment_chat_payload(store: SchedulerStore, body: dict[str, Any]) -> dict[st
     cc = body.get("client_calendar")
     if isinstance(cc, dict):
         anchor = cc.get("date_iso")
+        focus_raw = cc.get("planner_focus_date_iso")
+        planner_focus = focus_raw.strip() if isinstance(focus_raw, str) else None
         if isinstance(anchor, str):
+            ui_focus = _planner_ui_focus_block(
+                clock_anchor_iso=anchor, planner_focus_iso=planner_focus
+            )
+            if ui_focus:
+                _append_context_block(out, ui_focus)
             pf = planner_facts_injection(raw_content, anchor_date_iso=anchor)
             if pf:
                 out["content"] = f"{pf}\n\n{raw_content}".strip() if raw_content.strip() else pf
-            pb = _persisted_block_for_calendar(store, anchor_iso=anchor, user_raw=raw_content)
+            pb = _persisted_block_for_calendar(
+                store,
+                anchor_iso=anchor,
+                user_raw=raw_content,
+                planner_focus_iso=planner_focus,
+            )
             _append_context_block(out, pb)
+            habits_anchor = planner_focus or anchor
             habits_snapshot = store.get_habits_snapshot()
-            required_block = required_habits_context_block(habits_snapshot, anchor)
+            required_block = required_habits_context_block(habits_snapshot, habits_anchor)
             _append_context_block(out, required_block)
-            non_required_block = non_required_habits_context_block(habits_snapshot, anchor)
+            non_required_block = non_required_habits_context_block(habits_snapshot, habits_anchor)
             _append_context_block(out, non_required_block)
     learned = store.learned_activity_context_for_text(raw_content)
     _append_context_block(out, learned)
@@ -363,6 +440,100 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/calendar/status":
             self._send_json(200, self._calendar_status_payload())
+            return
+
+        if path == "/api/calendar/oauth/start":
+            mgr = self._calendar()
+            if mgr is None:
+                self._send_json(503, {"error": "Calendar sync manager unavailable"})
+                return
+            tz = qs.get("timezone", [None])[0]
+            if isinstance(tz, str) and tz.strip():
+                persist_client_tz_from_payload(self._store(), {"timezone": tz.strip()})
+            try:
+                payload = mgr.begin_browser_oauth()
+            except FileNotFoundError as exc:
+                self._send_json(424, {"error": str(exc)})
+                return
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
+            except RuntimeError as exc:
+                self._send_json(503, {"error": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": f"OAuth start failed: {exc}"})
+                return
+            flow_id = uuid.uuid4().hex[:10]
+            redirect = mgr.status().get("oauth_redirect_uri")
+            day_ui_flow_log(
+                flow_id,
+                f"GCal OAuth start state={payload['state'][:8]} redirect={redirect}",
+                lane="calendar",
+                role="gcal_oauth_start",
+            )
+            self._send_json(200, {"ok": True, **payload})
+            return
+
+        if path == "/api/calendar/oauth/callback":
+            mgr = self._calendar()
+            if mgr is None:
+                self._send_binary(
+                    503,
+                    _gcal_oauth_result_html(ok=False, error="Calendar sync unavailable"),
+                    "text/html; charset=utf-8",
+                )
+                return
+            oauth_err = qs.get("error", [None])[0]
+            if isinstance(oauth_err, str) and oauth_err.strip():
+                err_msg = oauth_err.strip()
+                if err_msg == "access_denied":
+                    err_msg = (
+                        "Google Calendar access was denied. "
+                        "Click Connect Calendar again and allow calendar permission."
+                    )
+                day_ui_flow_log(
+                    uuid.uuid4().hex[:10],
+                    f"GCal OAuth callback denied error={oauth_err!r}",
+                    lane="calendar",
+                    role="gcal_oauth_callback",
+                )
+                self._send_binary(
+                    200,
+                    _gcal_oauth_result_html(ok=False, error=err_msg),
+                    "text/html; charset=utf-8",
+                )
+                return
+            host_hdr = self.headers.get("Host") or "127.0.0.1"
+            auth_response = f"http://{host_hdr}{self.path}"
+            flow_id = uuid.uuid4().hex[:10]
+            try:
+                mgr.complete_browser_oauth(auth_response)
+                mgr.enable(calendar_id="primary")
+                self._trigger_calendar_sync_async()
+                day_ui_flow_log(
+                    flow_id,
+                    "GCal OAuth callback success token saved",
+                    lane="calendar",
+                    role="gcal_oauth_callback",
+                )
+                self._send_binary(
+                    200,
+                    _gcal_oauth_result_html(ok=True),
+                    "text/html; charset=utf-8",
+                )
+            except Exception as exc:  # noqa: BLE001
+                day_ui_flow_log(
+                    flow_id,
+                    f"GCal OAuth callback failed: {exc}",
+                    lane="calendar",
+                    role="gcal_oauth_callback",
+                )
+                self._send_binary(
+                    200,
+                    _gcal_oauth_result_html(ok=False, error=str(exc)),
+                    "text/html; charset=utf-8",
+                )
             return
 
         if path == "/api/habits":
@@ -503,22 +674,35 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "`calendar_id` must be a string"})
                 return
             try:
-                mgr.interactive_login()
+                payload = mgr.begin_browser_oauth()
             except FileNotFoundError as exc:
                 self._send_json(424, {"error": str(exc)})
                 return
-            except Exception as exc:  # noqa: BLE001
-                self._send_json(500, {"error": f"OAuth failed: {exc}"})
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
                 return
-            mgr.enable(calendar_id=cal)
-            self._trigger_calendar_sync_async()
-            self._send_json(200, {"ok": True, "status": mgr.status()})
+            except RuntimeError as exc:
+                self._send_json(503, {"error": str(exc)})
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"error": f"OAuth start failed: {exc}"})
+                return
+            self._send_json(
+                409,
+                {
+                    "error": (
+                        "Browser OAuth required. Open authorization_url in a popup or new tab."
+                    ),
+                    "authorization_url": payload["authorization_url"],
+                    "state": payload["state"],
+                    "status": mgr.status(),
+                },
+            )
             day_ui_flow_log(
                 uuid.uuid4().hex[:10],
-                f"Google Calendar OAuth enabled calendar_id={cal!r}",
+                f"GCal legacy POST /auth redirected to browser OAuth calendar_id={cal!r}",
                 lane="calendar",
                 role="gcal_auth",
-                mlx="posted",
             )
             return
 
@@ -571,6 +755,14 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "Need `assistant` (str) and `client_local_date`."})
                 return
             touched, parsed = collect_tasks_with_dates(assistant, default_plan_date=anchor)
+            clock_date = data.get("client_clock_date")
+            if isinstance(clock_date, str):
+                touched = filter_assistant_import_dates(
+                    touched,
+                    client_clock_date=clock_date,
+                    client_local_date=anchor,
+                )
+                parsed = [p for p in parsed if p.plan_date_iso in touched]
             if not parsed:
                 self._send_json(200, {"ok": True, "inserted": 0, "dates": touched})
                 day_ui_flow_log(
@@ -592,7 +784,7 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
                 )
                 for p in parsed
             ]
-            n = self._store().replace_tasks_for_dates(touched, rows)
+            n = self._store().merge_tasks_from_assistant(touched, rows)
             self._trigger_calendar_sync_async()
             self._send_json(200, {"ok": True, "inserted": n, "dates": touched})
             day_ui_flow_log(
@@ -918,6 +1110,10 @@ class ThreadedUiServer(ThreadingHTTPServer):
 
 
 def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("google_calendar_sync").setLevel(logging.INFO)
+    logging.getLogger("google_calendar_client").setLevel(logging.INFO)
+
     parser = argparse.ArgumentParser(
         description="Day-scheduler web shell (SQLite + scheduler LLM gateway).",
     )
@@ -1003,10 +1199,13 @@ def main(argv: list[str] | None = None) -> int:
         else (Path.home() / ".config" / repo_root.name / "calendar")
     )
     token_path = token_dir / "oauth-token.json"
+    oauth_redirect = oauth_redirect_uri(ns.host, ns.port)
+    allow_oauth_insecure_transport_for_loopback(url=oauth_redirect)
     gcal_manager = CalendarSyncManager(
         store=store,
         client_secrets_path=secrets_path,
         token_path=token_path,
+        oauth_redirect_uri=oauth_redirect,
     )
 
     (repo_root / "financial-data").mkdir(parents=True, exist_ok=True)
@@ -1059,6 +1258,7 @@ def main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
         flush=True,
     )
+    print(f"GCal OAuth redirect → {oauth_redirect}", file=sys.stderr, flush=True)
     if poller is None:
         print("GCal poller        → disabled", file=sys.stderr, flush=True)
     else:

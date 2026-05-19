@@ -171,6 +171,7 @@ def build_query_parser_user_block(
     client_clock_date_iso: str,
     client_clock_minutes: int | None,
     client_timezone_iana: str | None,
+    planner_focus_date_iso: str | None = None,
 ) -> str:
     wall = ""
     if client_clock_minutes is not None:
@@ -183,10 +184,21 @@ def build_query_parser_user_block(
     tz_line = ""
     if isinstance(client_timezone_iana, str) and client_timezone_iana.strip():
         tz_line = f"\nIANA timezone (UI): {client_timezone_iana.strip()}"
+    focus_line = ""
+    if isinstance(planner_focus_date_iso, str) and is_valid_iso_date(planner_focus_date_iso.strip()):
+        focus = planner_focus_date_iso.strip()
+        focus_line = (
+            f"\nPlanner UI focus date (day the user is viewing in the agenda): **{focus}**."
+        )
+        if focus != client_clock_date_iso:
+            focus_line += (
+                " When the message does not name another day, prefer this focus date for "
+                "`primary_plan_date_iso`."
+            )
     return (
         f"Anchor calendar date (interpret **today** / **tomorrow** against this): "
         f"**{client_clock_date_iso}**.\n"
-        f"Local wall clock now: **{wall or 'unknown'}**.{tz_line}\n\n"
+        f"Local wall clock now: **{wall or 'unknown'}**.{tz_line}{focus_line}\n\n"
         "USER MESSAGE:\n"
         f"{content.strip()}"
     )
@@ -218,10 +230,19 @@ def format_query_parser_host_facts(parsed: ParsedQuery) -> str:
     )
 
 
-def resolve_import_default_plan_date(parsed: ParsedQuery, *, client_clock_date_iso: str) -> str:
+def resolve_import_default_plan_date(
+    parsed: ParsedQuery,
+    *,
+    client_clock_date_iso: str,
+    planner_focus_date_iso: str | None = None,
+) -> str:
     """ISO date string for ``collect_tasks_with_dates(..., default_plan_date=…)``."""
     if parsed.primary_plan_date_iso and is_valid_iso_date(parsed.primary_plan_date_iso):
         return parsed.primary_plan_date_iso
+    if isinstance(planner_focus_date_iso, str) and is_valid_iso_date(
+        planner_focus_date_iso.strip()
+    ):
+        return planner_focus_date_iso.strip()
     anchor = client_clock_date_iso.strip()
     return anchor if is_valid_iso_date(anchor) else date.today().isoformat()
 

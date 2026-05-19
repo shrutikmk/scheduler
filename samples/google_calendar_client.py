@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
+
+LOG = logging.getLogger(__name__)
+LOG.addHandler(logging.NullHandler())
 
 CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 
@@ -80,46 +85,131 @@ class CalendarReadiness:
     human_lines: tuple[str, ...]
 
 
+def oauth_redirect_uri(host: str, port: int) -> str:
+    """Loopback redirect URI for browser OAuth on the day-scheduler web server."""
+    host_norm = (host or "127.0.0.1").strip()
+    if host_norm in {"0.0.0.0", "::"}:
+        host_norm = "127.0.0.1"
+    return f"http://{host_norm}:{int(port)}/api/calendar/oauth/callback"
+
+
+def allow_oauth_insecure_transport_for_loopback(*, url: str | None = None) -> None:
+    """Allow ``http://127.0.0.1`` OAuth redirects (oauthlib requires HTTPS otherwise).
+
+    Google Desktop OAuth uses loopback HTTP; oauthlib blocks that unless
+    ``OAUTHLIB_INSECURE_TRANSPORT=1`` is set for local development hosts only.
+    """
+    if os.environ.get("OAUTHLIB_INSECURE_TRANSPORT", "").lower() in {"1", "true", "yes"}:
+        return
+    if url:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme == "http" and host in {"127.0.0.1", "localhost", "::1"}:
+            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+            LOG.info("Enabled OAUTHLIB_INSECURE_TRANSPORT for loopback OAuth (%s)", host)
+        return
+    os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
+
+def secrets_type_ok(client_secrets_path: Path) -> bool:
+    """True when the OAuth JSON looks like a Desktop (``installed``) client."""
+    if not client_secrets_path.is_file():
+        return False
+    try:
+        data = json.loads(client_secrets_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    installed = data.get("installed")
+    if not isinstance(installed, dict):
+        return False
+    return bool(installed.get("client_id")) and bool(installed.get("client_secret"))
+
+
+def create_installed_app_flow(
+    *,
+    client_secrets_path: Path,
+    redirect_uri: str,
+) -> Any:
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    if not client_secrets_path.is_file():
+        raise FileNotFoundError(f"Missing OAuth client secrets file: {client_secrets_path}")
+    allow_oauth_insecure_transport_for_loopback(url=redirect_uri)
+    scopes = [CALENDAR_EVENTS_SCOPE]
+    flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), scopes)
+    flow.redirect_uri = redirect_uri
+    return flow
+
+
+def oauth_authorization_url(flow: Any) -> tuple[str, str]:
+    """Return ``(authorization_url, csrf_state)`` for browser sign-in."""
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+        include_granted_scopes="true",
+    )
+    return str(auth_url), str(state)
+
+
+def oauth_exchange_code(flow: Any, authorization_response_url: str) -> Any:
+    """Exchange the redirect URL for OAuth credentials."""
+    allow_oauth_insecure_transport_for_loopback(url=authorization_response_url)
+    flow.fetch_token(authorization_response=authorization_response_url)
+    return flow.credentials
+
+
+def persist_credentials(token_path: Path, creds: Any) -> None:
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(creds.to_json(), encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class SilentCredentialResult:
+    creds: Any | None
+    error: Literal["no_secrets", "no_token", "need_browser", "refresh_failed"] | None
+    error_detail: str | None = None
+
+
 def acquire_access_token_silently(
     *,
     client_secrets_path: Path,
     token_path: Path,
-) -> tuple[Any | None, Literal["no_secrets", "no_token", "need_browser", "refresh_failed"] | None]:
-    """Load or refresh OAuth credentials **without** opening a browser.
-
-    Returns `(creds, None)` when ``creds.valid`` and scopes include calendar events.
-
-    Otherwise returns ``(partial_or_none, reason)``.
-    """
+) -> SilentCredentialResult:
+    """Load or refresh OAuth credentials **without** opening a browser."""
+    from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
     scopes = [CALENDAR_EVENTS_SCOPE]
     if not client_secrets_path.is_file():
-        return None, "no_secrets"
+        return SilentCredentialResult(None, "no_secrets")
 
     if not token_path.is_file():
-        return None, "no_token"
+        return SilentCredentialResult(None, "no_token")
 
     creds = Credentials.from_authorized_user_file(str(token_path), scopes)
 
     try:
         if creds.valid:
-            return creds, None
+            return SilentCredentialResult(creds, None)
 
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            token_path.parent.mkdir(parents=True, exist_ok=True)
-            token_path.write_text(creds.to_json(), encoding="utf-8")
+            persist_credentials(token_path, creds)
             if creds.valid:
-                return creds, None
+                return SilentCredentialResult(creds, None)
         elif creds.expired:
             pass
-    except Exception:
-        return None, "refresh_failed"
+    except RefreshError as exc:
+        detail = str(exc).strip() or "refresh token rejected"
+        LOG.warning("Google Calendar token refresh failed: %s", detail)
+        return SilentCredentialResult(None, "refresh_failed", detail)
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        LOG.exception("Google Calendar token refresh failed: %s", detail)
+        return SilentCredentialResult(None, "refresh_failed", detail)
 
-    # Missing/expired credentials without usable refresh
-    return None, "need_browser"
+    return SilentCredentialResult(None, "need_browser")
 
 
 def get_calendar_metadata(
@@ -214,10 +304,12 @@ def evaluate_calendar_readiness(
             human_lines=tuple(lines),
         )
 
-    creds, silent_err = acquire_access_token_silently(
+    creds_result = acquire_access_token_silently(
         client_secrets_path=client_secrets_path,
         token_path=token_path,
     )
+    creds = creds_result.creds
+    silent_err = creds_result.error
 
     if silent_err == "refresh_failed":
         human.append(
@@ -373,10 +465,12 @@ def load_or_refresh_credentials(
     client_secrets_path: Path,
     token_path: Path,
 ) -> Any:
+    """CLI-only blocking OAuth via ephemeral localhost server."""
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
 
+    allow_oauth_insecure_transport_for_loopback()
     if not client_secrets_path.is_file():
         raise FileNotFoundError(
             "Missing OAuth client secrets file.\n"
@@ -398,8 +492,7 @@ def load_or_refresh_credentials(
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), scopes)
             creds = flow.run_local_server(port=0)
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(creds.to_json(), encoding="utf-8")
+        persist_credentials(token_path, creds)
 
     return creds
 

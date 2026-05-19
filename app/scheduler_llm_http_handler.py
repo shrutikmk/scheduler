@@ -477,6 +477,7 @@ def build_llm_gateway_handler(
         client_clock_date_iso: str,
         client_clock_minutes: int | None,
         client_timezone_iana: str | None,
+        planner_focus_date_iso: str | None,
         flow_id: str,
     ) -> ParsedQuery:
         user_block = build_query_parser_user_block(
@@ -484,6 +485,7 @@ def build_llm_gateway_handler(
             client_clock_date_iso=client_clock_date_iso,
             client_clock_minutes=client_clock_minutes,
             client_timezone_iana=client_timezone_iana,
+            planner_focus_date_iso=planner_focus_date_iso,
         )
         _ = parser_model_path
         try:
@@ -777,8 +779,17 @@ def build_llm_gateway_handler(
                 if client_clock_date is not None
                 else date.today().isoformat()
             )
+            planner_focus_iso: str | None = None
+            if isinstance(cc, dict):
+                pf_raw = cc.get("planner_focus_date_iso")
+                if isinstance(pf_raw, str) and pf_raw.strip():
+                    planner_focus_iso = pf_raw.strip()
             parsed_query_result = ParsedQuery()
-            import_default_plan_date = client_clock_date_iso_fallback
+            import_default_plan_date = resolve_import_default_plan_date(
+                parsed_query_result,
+                client_clock_date_iso=client_clock_date_iso_fallback,
+                planner_focus_date_iso=planner_focus_iso,
+            )
 
             schedule_buffer = payload.get("buffer") is True or os.environ.get(
                 "MLX_DAY_SCHEDULER_BUFFER", ""
@@ -829,6 +840,7 @@ def build_llm_gateway_handler(
                     client_clock_date_iso=client_clock_date_iso_fallback,
                     client_clock_minutes=client_clock_minutes,
                     client_timezone_iana=client_timezone_iana,
+                    planner_focus_date_iso=planner_focus_iso,
                     flow_id=flow_id,
                 )
                 qpf = format_query_parser_host_facts(parsed_query_result)
@@ -836,6 +848,7 @@ def build_llm_gateway_handler(
                 import_default_plan_date = resolve_import_default_plan_date(
                     parsed_query_result,
                     client_clock_date_iso=client_clock_date_iso_fallback,
+                    planner_focus_date_iso=planner_focus_iso,
                 )
 
             persist_flag = isinstance(extra_ctx, str) and bool(extra_ctx.strip())

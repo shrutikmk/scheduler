@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
 from pathlib import Path
@@ -428,6 +428,13 @@ class SyncOutcome:
         }
 
 
+@dataclass
+class _PendingOAuthFlow:
+    flow: Any
+    state: str
+    created_at: float = field(default_factory=time.time)
+
+
 class CalendarSyncManager:
     """Push dirty rows / pull events for a single user.
 
@@ -444,6 +451,7 @@ class CalendarSyncManager:
         default_calendar_id: str = "primary",
         local_tz_name: str | None = None,
         pull_horizon_days: int = DEFAULT_PULL_HORIZON_DAYS,
+        oauth_redirect_uri: str | None = None,
     ) -> None:
         self._store = store
         self._client_secrets_path = Path(client_secrets_path)
@@ -451,7 +459,12 @@ class CalendarSyncManager:
         self._default_calendar_id = default_calendar_id
         self._local_tz_name = local_tz_name or _detect_local_iana()
         self._pull_horizon_days = max(1, int(pull_horizon_days))
+        self._oauth_redirect_uri = (oauth_redirect_uri or "").strip() or None
         self._lock = threading.Lock()
+        self._oauth_lock = threading.Lock()
+        self._pending_oauth: dict[str, _PendingOAuthFlow] = {}
+        self._debug_last_oauth_at: int | None = None
+        self._debug_last_refresh_error: str | None = None
 
     # ---- credential helpers ----
 
@@ -461,26 +474,111 @@ class CalendarSyncManager:
     def has_token(self) -> bool:
         return self._token_path.is_file()
 
-    def silent_credentials(self) -> tuple[Any | None, str | None]:
-        """Refresh the saved token without opening a browser. Returns ``(creds, error)``."""
+    def silent_credentials(self) -> tuple[Any | None, str | None, str | None]:
+        """Refresh the saved token without opening a browser."""
         from google_calendar_client import acquire_access_token_silently
 
-        creds, err = acquire_access_token_silently(
+        result = acquire_access_token_silently(
             client_secrets_path=self._client_secrets_path,
             token_path=self._token_path,
         )
-        if err:
-            return None, err
-        return creds, None
+        if result.error_detail:
+            self._debug_last_refresh_error = result.error_detail
+        if result.error:
+            return None, result.error, result.error_detail
+        return result.creds, None, None
 
     def interactive_login(self) -> Any:
-        """Run the browser OAuth flow (blocking) and persist a fresh token."""
+        """CLI-only blocking OAuth via ephemeral localhost server (not for web UI)."""
         from google_calendar_client import load_or_refresh_credentials
 
         return load_or_refresh_credentials(
             client_secrets_path=self._client_secrets_path,
             token_path=self._token_path,
         )
+
+    def _purge_stale_oauth_pending(self) -> None:
+        cutoff = time.time() - 600.0
+        stale = [k for k, v in self._pending_oauth.items() if v.created_at < cutoff]
+        for key in stale:
+            self._pending_oauth.pop(key, None)
+
+    def begin_browser_oauth(self) -> dict[str, str]:
+        """Start browser OAuth; returns authorization URL + CSRF state."""
+        from google_calendar_client import (
+            acquire_access_token_silently,
+            create_installed_app_flow,
+            oauth_authorization_url,
+            secrets_type_ok,
+        )
+
+        if not self._oauth_redirect_uri:
+            raise RuntimeError("Browser OAuth is not configured on this server.")
+        if not self.has_secrets():
+            raise FileNotFoundError(f"Missing OAuth client secrets: {self._client_secrets_path}")
+        if not secrets_type_ok(self._client_secrets_path):
+            raise ValueError(
+                "OAuth client secrets must be a Desktop app JSON with an installed block."
+            )
+
+        if self._token_path.is_file():
+            try:
+                stale = acquire_access_token_silently(
+                    client_secrets_path=self._client_secrets_path,
+                    token_path=self._token_path,
+                )
+                should_clear = stale.error in {"refresh_failed", "need_browser"}
+            except (ValueError, OSError) as exc:
+                LOG.warning("Stale OAuth token unreadable; removing before reconnect: %s", exc)
+                should_clear = True
+            else:
+                should_clear = bool(should_clear)
+            if should_clear:
+                try:
+                    self._token_path.unlink()
+                    LOG.info("Removed stale OAuth token before browser reconnect")
+                except OSError as exc:
+                    LOG.warning("Could not remove stale OAuth token: %s", exc)
+
+        flow = create_installed_app_flow(
+            client_secrets_path=self._client_secrets_path,
+            redirect_uri=self._oauth_redirect_uri,
+        )
+        auth_url, state = oauth_authorization_url(flow)
+        with self._oauth_lock:
+            self._purge_stale_oauth_pending()
+            self._pending_oauth[state] = _PendingOAuthFlow(flow=flow, state=state)
+        LOG.info(
+            "GCal browser OAuth started redirect=%s state=%s",
+            self._oauth_redirect_uri,
+            state[:8],
+        )
+        return {"authorization_url": auth_url, "state": state}
+
+    def complete_browser_oauth(self, authorization_response_url: str) -> None:
+        """Finish browser OAuth from the redirect callback URL."""
+        from urllib.parse import parse_qs, urlparse
+
+        from google_calendar_client import oauth_exchange_code, persist_credentials
+
+        parsed = urlparse(authorization_response_url)
+        qs = parse_qs(parsed.query)
+        state_vals = qs.get("state") or []
+        state = state_vals[0] if state_vals else ""
+        if not state:
+            raise ValueError("OAuth callback missing state parameter.")
+
+        with self._oauth_lock:
+            self._purge_stale_oauth_pending()
+            pending = self._pending_oauth.pop(state, None)
+        if pending is None:
+            raise ValueError("OAuth state expired or unknown; start Connect Calendar again.")
+
+        creds = oauth_exchange_code(pending.flow, authorization_response_url)
+        persist_credentials(self._token_path, creds)
+        self._debug_last_oauth_at = int(time.time() * 1000)
+        self._debug_last_refresh_error = None
+        LOG.info("GCal browser OAuth completed token_path=%s", self._token_path)
 
     # ---- enable / disable ----
 
@@ -513,14 +611,30 @@ class CalendarSyncManager:
         return self._local_tz_name
 
     def status(self) -> dict[str, Any]:
+        from google_calendar_client import secrets_type_ok
+
         state = self._store.get_gcal_sync_state() or {}
         secrets_ok = self.has_secrets()
         token_ok = self.has_token()
+        credentials_ok = False
+        credential_error: str | None = None
+        credential_error_detail: str | None = None
+        if secrets_ok and token_ok:
+            _creds, cred_err, cred_detail = self.silent_credentials()
+            credentials_ok = _creds is not None
+            credential_error = cred_err
+            credential_error_detail = cred_detail
+        elif secrets_ok and not token_ok:
+            credential_error = "no_token"
         return {
             "secrets_path": str(self._client_secrets_path),
             "token_path": str(self._token_path),
             "secrets_ok": secrets_ok,
+            "secrets_type_ok": secrets_type_ok(self._client_secrets_path),
             "token_ok": token_ok,
+            "credentials_ok": credentials_ok,
+            "credential_error": credential_error,
+            "credential_error_detail": credential_error_detail,
             "calendar_id": state.get("calendar_id") or self._default_calendar_id,
             "enabled": bool(state.get("enabled")),
             "last_sync_at": state.get("last_sync_at"),
@@ -529,6 +643,9 @@ class CalendarSyncManager:
             "local_tz_name": self._local_tz_name,
             "client_tz": state.get("client_tz"),
             "push_timezone": self.effective_timezone(),
+            "oauth_redirect_uri": self._oauth_redirect_uri,
+            "debug_last_oauth_at": self._debug_last_oauth_at,
+            "debug_last_refresh_error": self._debug_last_refresh_error,
         }
 
     def delete_all_calendar_events_for_plan_date(
@@ -551,7 +668,7 @@ class CalendarSyncManager:
         calendar_id = str(state.get("calendar_id") or "primary")
 
         with self._lock:
-            creds, err = self.silent_credentials()
+            creds, err, err_detail = self.silent_credentials()
             if err or creds is None:
                 return 0, [f"oauth: {err or 'no credentials'}"]
             access_token = getattr(creds, "token", None)
@@ -613,12 +730,16 @@ class CalendarSyncManager:
         if not state or not state.get("enabled"):
             return outcome
         with self._lock:
-            creds, err = self.silent_credentials()
+            creds, err, err_detail = self.silent_credentials()
             if err or creds is None:
+                msg = err or "needs_browser_login"
+                if err_detail:
+                    msg = f"{msg}: {err_detail}"
+                LOG.warning("GCal sync_once blocked on credentials: %s", msg)
                 outcome.errors.append(f"oauth: {err or 'no credentials'}")
                 self._store.set_gcal_sync_state(
                     calendar_id=str(state.get("calendar_id") or "primary"),
-                    last_error=err or "needs_browser_login",
+                    last_error=msg,
                 )
                 return outcome
             access_token = getattr(creds, "token", None)

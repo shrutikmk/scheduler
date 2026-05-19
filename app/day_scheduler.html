@@ -755,6 +755,134 @@
       align-items: center;
       gap: 0.35rem;
     }
+
+    /* Queued follow-ups (Cursor-style list) */
+    .queue-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      padding: 0.4rem 0.55rem 0.5rem;
+      width: min(100%, 48rem);
+      margin: 0 auto;
+      background: var(--soft);
+      border: 1px solid var(--border-soft);
+      border-radius: 14px;
+      max-height: 13rem;
+      overflow: auto;
+    }
+    .queue-panel[hidden] { display: none; }
+    .queue-head {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+      padding: 0.05rem 0.1rem;
+    }
+    .queue-twisty {
+      width: 0.85rem;
+      display: inline-flex;
+      justify-content: center;
+      transition: transform 0.12s ease;
+    }
+    .queue-panel[data-collapsed="true"] .queue-list { display: none; }
+    .queue-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .queue-row {
+      display: grid;
+      grid-template-columns: 1.05rem 1fr auto;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.32rem 0.45rem;
+      background: var(--panel);
+      border: 1px solid var(--border-soft);
+      border-radius: 0.5rem;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+    .queue-row.in-flight {
+      border-color: var(--accent-soft);
+      background: var(--accent-soft);
+      opacity: 0.85;
+    }
+    .queue-row.actions-disabled .queue-actions {
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    .queue-bullet {
+      width: 0.85rem;
+      height: 0.85rem;
+      border-radius: 999px;
+      border: 1.5px solid var(--muted);
+      display: inline-block;
+      box-sizing: border-box;
+      opacity: 0.6;
+    }
+    .queue-row.in-flight .queue-bullet {
+      border-color: var(--accent);
+      background: var(--accent);
+      opacity: 1;
+    }
+    .queue-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: default;
+    }
+    .queue-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.05rem;
+    }
+    .queue-act {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      width: 1.7rem;
+      height: 1.7rem;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .queue-act:hover {
+      background: var(--soft);
+      border-color: var(--border-soft);
+      color: var(--text);
+    }
+    .queue-act:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .queue-act.danger:hover {
+      color: var(--warn-text);
+      background: var(--warn-bg);
+      border-color: var(--warn-border);
+    }
+    .queue-act svg {
+      width: 0.95rem;
+      height: 0.95rem;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
     button {
       padding: 0.4rem 0.75rem;
       cursor: pointer;
@@ -923,10 +1051,11 @@
         </div>
         <div class="chat-compose">
           <div class="status" id="chat-status"></div>
+          <div class="queue-panel" id="chat-queue" hidden role="list" aria-label="Queued messages"></div>
           <div class="compose-box">
             <textarea id="prompt" placeholder="Message your day planner…"></textarea>
             <div class="chat-row">
-              <span class="compose-hint">Enter sends · Shift+Enter adds a line · one message at a time while a reply streams</span>
+              <span class="compose-hint">Enter sends · Shift+Enter adds a line · queue follow-ups while a reply streams · Send (empty) retries after an error</span>
               <span class="compose-actions">
                 <button type="button" id="clear-thread">Clear</button>
                 <button type="button" id="send" class="primary">Send</button>
@@ -1046,6 +1175,7 @@
   const sendBtn = document.getElementById("send");
   const clearBtn = document.getElementById("clear-thread");
   const statusEl = document.getElementById("chat-status");
+  const queuePanelEl = document.getElementById("chat-queue");
   const llmPill = document.getElementById("llm-status-pill");
   const agendaDbList = document.getElementById("agenda-db-list");
   const btnPrevDay = document.getElementById("btn-prev-day");
@@ -1098,11 +1228,260 @@
   }
 
   function refreshSendEnabled() {
-    // Disable Send while a turn is streaming (single message at a time).
-    sendBtn.disabled = !llmOnline || requestInFlight;
+    sendBtn.disabled = !llmOnline;
+  }
+
+  /** FIFO of user messages not yet applied to the model (draft follow-ups). */
+  const pendingChatQueue = [];
+  let chatQueueIdSeq = 1;
+  function newChatQueueId() {
+    chatQueueIdSeq += 1;
+    return "q" + chatQueueIdSeq;
+  }
+
+  /** @type {Promise<void> | null} */
+  let chatQueueDrainPromise = null;
+
+  function svgQueueIcon(paths) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    for (let pi = 0; pi < paths.length; pi += 1) {
+      const p = document.createElementNS(ns, "path");
+      p.setAttribute("d", paths[pi]);
+      svg.appendChild(p);
+    }
+    return svg;
+  }
+
+  function makeQueueActionBtn(act, label, paths, danger) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "queue-act" + (danger ? " danger" : "");
+    btn.dataset.act = act;
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.appendChild(svgQueueIcon(paths));
+    return btn;
+  }
+
+  function findChatQueueIndex(qid) {
+    for (let i = 0; i < pendingChatQueue.length; i += 1) {
+      if (pendingChatQueue[i].id === qid) return i;
+    }
+    return -1;
+  }
+
+  function renderChatQueuePanel() {
+    if (!queuePanelEl) return;
+    try {
+      const total = pendingChatQueue.length;
+      while (queuePanelEl.firstChild) queuePanelEl.removeChild(queuePanelEl.firstChild);
+      if (total === 0) {
+        queuePanelEl.hidden = true;
+        queuePanelEl.style.display = "none";
+        return;
+      }
+      queuePanelEl.removeAttribute("hidden");
+      queuePanelEl.style.display = "flex";
+      if (queuePanelEl.dataset.collapsed !== "true") {
+        queuePanelEl.dataset.collapsed = "false";
+      }
+      const collapsed = queuePanelEl.dataset.collapsed === "true";
+
+      const head = document.createElement("div");
+      head.className = "queue-head";
+      head.setAttribute("role", "button");
+      head.tabIndex = 0;
+      head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      const twisty = document.createElement("span");
+      twisty.className = "queue-twisty";
+      twisty.textContent = collapsed ? "▸" : "▾";
+      head.appendChild(twisty);
+      const count = document.createElement("span");
+      count.className = "queue-count";
+      count.textContent = total + " queued";
+      head.appendChild(count);
+      queuePanelEl.appendChild(head);
+
+      const ul = document.createElement("ul");
+      ul.className = "queue-list";
+      for (let qi = 0; qi < pendingChatQueue.length; qi += 1) {
+        const item = pendingChatQueue[qi];
+        const li = document.createElement("li");
+        li.className = "queue-row";
+        li.dataset.qid = item.id;
+        li.setAttribute("role", "listitem");
+
+        const bullet = document.createElement("span");
+        bullet.className = "queue-bullet";
+        bullet.setAttribute("aria-hidden", "true");
+        li.appendChild(bullet);
+
+        const text = document.createElement("span");
+        text.className = "queue-text";
+        const oneLine = String(item.text || "").replace(/\s+/g, " ").trim();
+        text.textContent = oneLine;
+        text.title = oneLine;
+        li.appendChild(text);
+
+        const actions = document.createElement("span");
+        actions.className = "queue-actions";
+        actions.appendChild(
+          makeQueueActionBtn("edit", "Edit message", [
+            "M4 20h4l10-10-4-4L4 16v4z",
+            "M14 6l4 4",
+          ]),
+        );
+        actions.appendChild(
+          makeQueueActionBtn("up", "Send next", [
+            "M12 19V5",
+            "M5 12l7-7 7 7",
+          ]),
+        );
+        actions.appendChild(
+          makeQueueActionBtn(
+            "trash",
+            "Remove",
+            ["M3 6h18", "M8 6V4h8v2", "M6 6l1 14h10l1-14"],
+            true,
+          ),
+        );
+        li.appendChild(actions);
+        ul.appendChild(li);
+      }
+      queuePanelEl.appendChild(ul);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[queue] render failed:", err);
+    }
+  }
+
+  function enqueueChatUserText(text) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return null;
+    const item = { id: newChatQueueId(), text: trimmed };
+    pendingChatQueue.push(item);
+    renderChatQueuePanel();
+    refreshSendEnabled();
+    return item;
+  }
+
+  function clearPendingChatQueue() {
+    pendingChatQueue.length = 0;
+    renderChatQueuePanel();
+    refreshSendEnabled();
+  }
+
+  function trashChatQueueItem(qid) {
+    const i = findChatQueueIndex(qid);
+    if (i < 0) return;
+    pendingChatQueue.splice(i, 1);
+    renderChatQueuePanel();
+    refreshSendEnabled();
+  }
+
+  function promoteChatQueueItem(qid) {
+    const i = findChatQueueIndex(qid);
+    if (i < 0) return;
+    const [item] = pendingChatQueue.splice(i, 1);
+    pendingChatQueue.splice(0, 0, item);
+    renderChatQueuePanel();
+  }
+
+  function editChatQueueItem(qid) {
+    const i = findChatQueueIndex(qid);
+    if (i < 0) return;
+    const [item] = pendingChatQueue.splice(i, 1);
+    const stash = promptEl.value.trim();
+    if (stash) {
+      pendingChatQueue.unshift({ id: newChatQueueId(), text: stash });
+    }
+    promptEl.value = item.text;
+    promptEl.focus();
+    try {
+      const len = promptEl.value.length;
+      promptEl.setSelectionRange(len, len);
+    } catch (_) {}
+    renderChatQueuePanel();
+    refreshSendEnabled();
+  }
+
+  function ensureChatQueueDrain() {
+    if (chatQueueDrainPromise != null) return;
+    if (!llmOnline || pendingChatQueue.length === 0) return;
+    chatQueueDrainPromise = (async function () {
+      let stoppedAfterError = false;
+      try {
+        while (llmOnline && pendingChatQueue.length > 0) {
+          const next = pendingChatQueue[0];
+          if (!next) break;
+          try {
+            await runChatTurn(next.text, function onUserBubblePainted() {
+              const rm = findChatQueueIndex(next.id);
+              if (rm >= 0) pendingChatQueue.splice(rm, 1);
+              renderChatQueuePanel();
+              refreshSendEnabled();
+            });
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error("runChatTurn rejected", err);
+            statusEl.textContent =
+              "Send failed: " + String(err && err.message ? err.message : err);
+            stoppedAfterError = true;
+            break;
+          } finally {
+            renderChatQueuePanel();
+          }
+        }
+      } finally {
+        chatQueueDrainPromise = null;
+        renderChatQueuePanel();
+        refreshComposeStatus();
+        if (!stoppedAfterError && llmOnline && pendingChatQueue.length > 0) {
+          ensureChatQueueDrain();
+        }
+      }
+    })();
+  }
+
+  if (queuePanelEl) {
+    queuePanelEl.addEventListener("click", function (ev) {
+      const t = ev.target;
+      if (!(t instanceof Element)) return;
+      const head = t.closest(".queue-head");
+      if (head && queuePanelEl.contains(head)) {
+        queuePanelEl.dataset.collapsed =
+          queuePanelEl.dataset.collapsed === "true" ? "false" : "true";
+        renderChatQueuePanel();
+        return;
+      }
+      const btn = t.closest(".queue-act");
+      if (!btn || !(btn instanceof HTMLElement) || !btn.dataset.act) return;
+      const row = btn.closest(".queue-row");
+      if (!row || !(row instanceof HTMLElement) || !row.dataset.qid) return;
+      const qid = row.dataset.qid;
+      const act = btn.dataset.act;
+      if (act === "edit") editChatQueueItem(qid);
+      else if (act === "up") promoteChatQueueItem(qid);
+      else if (act === "trash") trashChatQueueItem(qid);
+    });
+    queuePanelEl.addEventListener("keydown", function (ev) {
+      const t = ev.target;
+      if (!(t instanceof Element)) return;
+      const head = t.closest(".queue-head");
+      if (!head) return;
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      queuePanelEl.dataset.collapsed =
+        queuePanelEl.dataset.collapsed === "true" ? "false" : "true";
+      renderChatQueuePanel();
+    });
   }
 
   async function pollLlmHealth() {
+    const wasOnline = llmOnline;
     try {
       const r = await fetch("/llm-health", { cache: "no-store" });
       const j = await r.json().catch(function () {
@@ -1133,6 +1512,9 @@
     }
     refreshSendEnabled();
     refreshComposeStatus();
+    if (!wasOnline && llmOnline && pendingChatQueue.length > 0) {
+      ensureChatQueueDrain();
+    }
   }
 
   void pollLlmHealth();
@@ -1155,6 +1537,142 @@
     if (hint) gcalPill.title = hint;
   }
 
+  function gcalReconnectHint(body) {
+    const credErr = body && body.credential_error;
+    const detail = body && body.credential_error_detail;
+    if (detail) return String(detail);
+    if (credErr === "refresh_failed") {
+      return "Saved Google token expired or was revoked. Click Connect Calendar to sign in again.";
+    }
+    if (credErr === "need_browser") {
+      return "Google Calendar needs browser sign-in. Click Connect Calendar.";
+    }
+    if (body && body.last_error) return String(body.last_error).split("\n")[0];
+    if (body && body.token_path) return String(body.token_path);
+    return "Google Calendar is not connected.";
+  }
+
+  function gcalLog(message, extra) {
+    try {
+      if (extra !== undefined) console.info("[gcal]", message, extra);
+      else console.info("[gcal]", message);
+    } catch (_) {}
+  }
+
+  function showGcalChatStatus(text) {
+    if (text) statusEl.textContent = String(text);
+  }
+
+  let gcalOAuthPollTimer = null;
+
+  function stopGcalOAuthWatch() {
+    if (gcalOAuthPollTimer) {
+      clearInterval(gcalOAuthPollTimer);
+      gcalOAuthPollTimer = null;
+    }
+  }
+
+  window.addEventListener("message", function (ev) {
+    if (!ev.data || ev.data.type !== "gcal-oauth") return;
+    if (ev.origin !== window.location.origin) return;
+    gcalLog("oauth message", { ok: ev.data.ok, error: ev.data.error || "" });
+    stopGcalOAuthWatch();
+    if (ev.data.ok) {
+      showGcalChatStatus("Google Calendar connected.");
+      void finishGcalConnectSuccess();
+    } else {
+      const err = ev.data.error || "Google Calendar connection failed.";
+      setGcalPill("GCal reconnect needed", "offline", err);
+      showGcalChatStatus(err);
+    }
+    gcalBtn.disabled = false;
+    gcalBtn.textContent = gcalBtn.dataset.action === "sync" ? "Sync now" : "Connect Calendar";
+  });
+
+  async function finishGcalConnectSuccess() {
+    await pollGcalStatus();
+    try {
+      const tzBody = JSON.stringify({
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      const r = await fetch("/api/calendar/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: tzBody,
+      });
+      const body = await r.json().catch(function () { return {}; });
+      gcalLog("post-connect sync", { ok: r.ok, errors: body && body.outcome && body.outcome.errors });
+      if (body && body.status) applyGcalStatusBody(body.status);
+      try { await reloadDbAgenda(); } catch (_) {}
+    } catch (e) {
+      gcalLog("post-connect sync failed", e && e.message ? e.message : e);
+    }
+  }
+
+  async function beginGcalConnect() {
+    const tz = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    gcalLog("oauth start");
+    const r = await fetch("/api/calendar/oauth/start?timezone=" + tz, { cache: "no-store" });
+    const body = await r.json().catch(function () { return {}; });
+    if (!r.ok || !body || !body.authorization_url) {
+      const err = (body && body.error) || r.statusText || "Could not start Google sign-in";
+      setGcalPill("GCal error", "offline", String(err));
+      showGcalChatStatus(String(err));
+      gcalLog("oauth start failed", err);
+      gcalBtn.disabled = false;
+      gcalBtn.textContent = "Connect Calendar";
+      return;
+    }
+    gcalLog("oauth start ok");
+    const popup = window.open(
+      body.authorization_url,
+      "gcal-oauth",
+      "width=520,height=720,noopener=no,noreferrer=no",
+    );
+    if (!popup) {
+      const msg = "Popup blocked. Allow popups for this site, then try again.";
+      setGcalPill("GCal reconnect needed", "offline", msg);
+      showGcalChatStatus(msg + " Opening sign-in in a new tab.");
+      gcalLog("oauth popup blocked");
+      window.open(body.authorization_url, "_blank");
+      gcalBtn.disabled = false;
+      gcalBtn.textContent = "Connect Calendar";
+      return;
+    }
+    stopGcalOAuthWatch();
+    gcalOAuthPollTimer = setInterval(async function () {
+      if (popup.closed) {
+        stopGcalOAuthWatch();
+        gcalLog("oauth popup closed");
+        await pollGcalStatus();
+        gcalBtn.disabled = false;
+        gcalBtn.textContent = "Connect Calendar";
+        return;
+      }
+      try {
+        const sr = await fetch("/api/calendar/status", { cache: "no-store" });
+        const status = await sr.json().catch(function () { return {}; });
+        if (status && status.credentials_ok) {
+          gcalLog("oauth status poll connected");
+          stopGcalOAuthWatch();
+          try { popup.close(); } catch (_) {}
+          showGcalChatStatus("Google Calendar connected.");
+          await finishGcalConnectSuccess();
+          gcalBtn.disabled = false;
+          gcalBtn.textContent = "Sync now";
+        }
+      } catch (_) {}
+    }, 2000);
+  }
+
+  function gcalNeedsReconnect(body) {
+    if (!body || !body.enabled) return true;
+    if (!body.token_ok) return true;
+    if (body.credentials_ok === false) return true;
+    const err = String(body.credential_error || body.last_error || "").toLowerCase();
+    return err === "refresh_failed" || err === "need_browser" || err.includes("needs_browser");
+  }
+
   function applyGcalStatusBody(body) {
     if (!body || body.available === false) {
       setGcalPill("GCal off", "muted", body && body.reason);
@@ -1166,8 +1684,14 @@
       gcalBtn.hidden = true;
       return;
     }
-    if (!body.enabled || !body.token_ok) {
-      setGcalPill("GCal disconnected", "offline", body.last_error || body.token_path);
+    if (body.secrets_type_ok === false) {
+      setGcalPill("GCal bad OAuth config", "offline", "OAuth JSON must be a Desktop app (installed) client.");
+      gcalBtn.hidden = true;
+      return;
+    }
+    if (gcalNeedsReconnect(body)) {
+      const label = body.token_ok ? "GCal reconnect needed" : "GCal disconnected";
+      setGcalPill(label, "offline", gcalReconnectHint(body));
       gcalBtn.hidden = false;
       gcalBtn.dataset.action = "connect";
       gcalBtn.textContent = "Connect Calendar";
@@ -1212,7 +1736,10 @@
     gcalBtn.disabled = true;
     gcalBtn.textContent = action === "connect" ? "Opening browser…" : "Syncing…";
     try {
-      const url = action === "connect" ? "/api/calendar/auth" : "/api/calendar/sync";
+      if (action === "connect") {
+        await beginGcalConnect();
+        return;
+      }
       const tzBody = JSON.stringify({
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
@@ -1221,17 +1748,45 @@
         headers: { "Content-Type": "application/json" },
         body: tzBody,
       };
-      const r = await fetch(url, init);
+      gcalLog("sync start");
+      const r = await fetch("/api/calendar/sync", init);
       const body = await r.json().catch(function () { return {}; });
-      if (body && body.status) applyGcalStatusBody(body.status);
+      gcalLog("sync response", { ok: r.ok, errors: body && body.outcome && body.outcome.errors });
+      if (!r.ok) {
+        setGcalPill("GCal error", "offline", String((body && body.error) || r.statusText || r.status));
+      } else if (body && body.status) {
+        applyGcalStatusBody(body.status);
+      }
       if (body && body.error) setGcalPill("GCal error", "offline", String(body.error));
+      const syncErrors = body && body.outcome && Array.isArray(body.outcome.errors)
+        ? body.outcome.errors.filter(Boolean)
+        : [];
+      if (syncErrors.length) {
+        const first = String(syncErrors[0]);
+        const status = body && body.status;
+        showGcalChatStatus(first);
+        if (/^oauth:/i.test(first) || (status && gcalNeedsReconnect(status))) {
+          applyGcalStatusBody(Object.assign({}, status || {}, {
+            credentials_ok: false,
+            credential_error: status && status.credential_error
+              ? status.credential_error
+              : first.replace(/^oauth:\s*/i, ""),
+            last_error: first,
+          }));
+        } else {
+          setGcalPill("GCal sync failed", "offline", first);
+        }
+      }
       try { await reloadDbAgenda(); } catch (_) {}
     } catch (e) {
       setGcalPill("GCal error", "offline", String(e && e.message ? e.message : e));
+      gcalLog("gcal action failed", e && e.message ? e.message : e);
     } finally {
-      gcalBtn.disabled = false;
-      if (gcalBtn.textContent === "Opening browser…" || gcalBtn.textContent === "Syncing…") {
-        gcalBtn.textContent = previous;
+      if (action !== "connect" || !gcalOAuthPollTimer) {
+        gcalBtn.disabled = false;
+        if (gcalBtn.textContent === "Opening browser…" || gcalBtn.textContent === "Syncing…") {
+          gcalBtn.textContent = previous;
+        }
       }
       void pollGcalStatus();
     }
@@ -1254,6 +1809,9 @@
 
   /** @type {{ title: string, duration_minutes: number, reason: string, target_date: string }[]} */
   let latestRequiredPlannerHabits = [];
+
+  /** Rows from the last completed GET /api/tasks load for planner duplicate checks. */
+  let latestSavedPlanTasks = [];
 
   const SCHED_LINE =
     /^\*\s+(?:\[(\d{4}-\d{2}-\d{2})\]\s+)?\[([^\]]+)\]\s*-\s*(.+?)\s*-\s*(\d+h\d+m)\s*$/;
@@ -1493,6 +2051,7 @@
   }
 
   function resetChatAndPreviewUi(msgStatus) {
+    clearPendingChatQueue();
     chatHistory = [];
     clearChatTranscript();
     lastLlmPreview = "";
@@ -1548,7 +2107,41 @@
       date_iso: localDateISO(now),
       minute_of_day: now.getHours() * 60 + now.getMinutes(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      planner_focus_date_iso: focusDateIso,
     };
+  }
+
+  function parseAnchorIsoForSuggestions() {
+    if (
+      lastImportDefaultPlanDateIso &&
+      /^\d{4}-\d{2}-\d{2}$/.test(lastImportDefaultPlanDateIso)
+    ) {
+      return lastImportDefaultPlanDateIso;
+    }
+    if (focusDateIso && /^\d{4}-\d{2}-\d{2}$/.test(focusDateIso)) {
+      return focusDateIso;
+    }
+    return lastAssistClientDateIso;
+  }
+
+  async function syncCalendarBeforeChat() {
+    if (!gcalBtn || gcalBtn.dataset.action !== "sync" || gcalBtn.disabled) {
+      return;
+    }
+    try {
+      const r = await fetch("/api/calendar/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      });
+      if (r.ok) {
+        try {
+          await reloadDbAgenda();
+        } catch (_) {}
+      }
+    } catch (_) {}
   }
 
   function durationLabelFromMinutes(dm) {
@@ -1559,21 +2152,36 @@
 
   async function reloadDbAgenda() {
     if (!agendaDbList) return;
+    const requestedDate = focusDateIso;
     try {
-      const r = await fetch("/api/tasks?date=" + encodeURIComponent(focusDateIso), {
+      const r = await fetch("/api/tasks?date=" + encodeURIComponent(requestedDate), {
         cache: "no-store",
       });
       if (!r.ok) {
-        renderTaskCards(agendaDbList, [], "Saved plan unavailable.");
+        if (focusDateIso === requestedDate) {
+          latestSavedPlanTasks = [];
+          renderTaskCards(agendaDbList, [], "Saved plan unavailable.");
+          refreshLlmSchedule(lastLlmPreview);
+        }
         return;
       }
-      const j = await r.json().catch(() => ({ tasks: [] }));
+      const j = await r.json().catch(() => ({ plan_date: requestedDate, tasks: [] }));
+      if (focusDateIso !== requestedDate) return;
+      const respDate =
+        typeof j.plan_date === "string" && j.plan_date ? j.plan_date : requestedDate;
+      if (respDate !== requestedDate) return;
       const tasks = j.tasks || [];
+      latestSavedPlanTasks = tasks;
       renderTaskCards(agendaDbList, tasks, "No saved tasks for this day yet.", {
         allowComplete: true,
       });
+      refreshLlmSchedule(lastLlmPreview);
     } catch (_) {
-      renderTaskCards(agendaDbList, [], "Saved plan unavailable.");
+      if (focusDateIso === requestedDate) {
+        latestSavedPlanTasks = [];
+        renderTaskCards(agendaDbList, [], "Saved plan unavailable.");
+        refreshLlmSchedule(lastLlmPreview);
+      }
     }
   }
 
@@ -1859,6 +2467,26 @@
     return tasks;
   }
 
+  /** Same duplicate rule as addSuggestedTaskToSchedule POST merge. */
+  function savedRowMatchesSuggestedTask(savedRow, suggestion, dateIso) {
+    const title =
+      typeof suggestion.title === "string" ? suggestion.title.trim() : "";
+    const start =
+      typeof suggestion.start_label === "string"
+        ? suggestion.start_label.trim()
+        : "";
+    const dm =
+      typeof suggestion.duration_minutes === "number"
+        ? suggestion.duration_minutes
+        : 0;
+    return (
+      String(savedRow.title || "").trim() === title &&
+      String(savedRow.start_label || "").trim() === start &&
+      Number(savedRow.duration_minutes || 0) === dm &&
+      String(savedRow.plan_date || "") === dateIso
+    );
+  }
+
   /** Guard concurrent add-suggestion merges (upsert replaces the whole day). */
   let addSuggestedTaskInFlight = false;
 
@@ -1885,12 +2513,7 @@
       const existing = Array.isArray(j.tasks) ? j.tasks : [];
 
       const isDup = existing.some(function (row) {
-        return (
-          String(row.title || "").trim() === title &&
-          String(row.start_label || "").trim() === start &&
-          Number(row.duration_minutes || 0) === dm &&
-          String(row.plan_date || "") === focusDateIso
-        );
+        return savedRowMatchesSuggestedTask(row, task, focusDateIso);
       });
       if (isDup) {
         statusEl.textContent = "Already on saved plan.";
@@ -1977,6 +2600,10 @@
   function renderTaskCards(container, tasks, emptyText, options) {
     const allowComplete = !!(options && options.allowComplete);
     const allowAddToSchedule = !!(options && options.allowAddToSchedule);
+    const savedPlanTasksForDupCheck =
+      options && Array.isArray(options.savedPlanTasksForDupCheck)
+        ? options.savedPlanTasksForDupCheck
+        : null;
     if (!container) return;
     container.innerHTML = "";
     if (!tasks.length) {
@@ -2017,17 +2644,31 @@
       time.textContent = task.start_label || "Anytime";
       top.appendChild(title);
       if (allowAddToSchedule && status === "suggested") {
+        const dup =
+          savedPlanTasksForDupCheck &&
+          savedPlanTasksForDupCheck.some(function (row) {
+            return savedRowMatchesSuggestedTask(row, task, focusDateIso);
+          });
         const addBtn = document.createElement("button");
         addBtn.type = "button";
         addBtn.className = "task-add-btn";
         addBtn.textContent = "+";
-        addBtn.title = "Add to saved plan";
-        addBtn.setAttribute("aria-label", "Add " + (task.title || "task") + " to saved plan");
-        addBtn.disabled = addSuggestedTaskInFlight;
-        addBtn.addEventListener("click", function () {
-          if (addSuggestedTaskInFlight) return;
-          void addSuggestedTaskToSchedule(task);
-        });
+        if (dup) {
+          addBtn.title = "Already on saved plan";
+          addBtn.setAttribute(
+            "aria-label",
+            (task.title || "Task") + " is already on the saved plan",
+          );
+          addBtn.disabled = true;
+        } else {
+          addBtn.title = "Add to saved plan";
+          addBtn.setAttribute("aria-label", "Add " + (task.title || "task") + " to saved plan");
+          addBtn.disabled = addSuggestedTaskInFlight;
+          addBtn.addEventListener("click", function () {
+            if (addSuggestedTaskInFlight) return;
+            void addSuggestedTaskToSchedule(task);
+          });
+        }
         actions.appendChild(addBtn);
       }
       actions.appendChild(time);
@@ -2102,22 +2743,28 @@
     agendaFallback.hidden = true;
     agendaFallback.textContent = "";
 
-    const llmHabitTasks = parseTasks(lastLlmPreview, lastAssistClientDateIso).filter(
-      isTaskAHabit,
+    // All timetable bullets parsed for ``focusDateIso`` (meetings/work/etc.), not habits only —
+    // the previous habit-only UI hid legitimate future-day plans from Latest suggested plan.
+    const allParsedForFocusDay = parseTasks(
+      lastLlmPreview,
+      parseAnchorIsoForSuggestions()
     );
-    const merged = llmHabitTasks.slice();
-    const seenTitles = {};
-    let k;
-    for (let i = 0; i < llmHabitTasks.length; i++) {
-      k = canonicalActivityKey(llmHabitTasks[i] && llmHabitTasks[i].title);
-      if (k) seenTitles[k] = true;
+    const seenHabitTitleKeys = {};
+    let hk;
+    for (let i = 0; i < allParsedForFocusDay.length; i++) {
+      const t = allParsedForFocusDay[i];
+      if (!t || !isTaskAHabit(t)) continue;
+      hk = canonicalActivityKey(t.title);
+      if (hk) seenHabitTitleKeys[hk] = true;
     }
+
+    const merged = [];
     for (let j = 0; j < latestRequiredPlannerHabits.length; j++) {
       const rh = latestRequiredPlannerHabits[j];
       if (!rh || !rh.title) continue;
-      k = canonicalActivityKey(rh.title);
-      if (!k || seenTitles[k]) continue;
-      seenTitles[k] = true;
+      hk = canonicalActivityKey(rh.title);
+      if (!hk || seenHabitTitleKeys[hk]) continue;
+      seenHabitTitleKeys[hk] = true;
       merged.push({
         start_label: "Anytime",
         title: rh.title,
@@ -2130,12 +2777,17 @@
         habitDeadlineReason: typeof rh.reason === "string" ? rh.reason.trim() : "",
       });
     }
+    for (let p = 0; p < allParsedForFocusDay.length; p++) {
+      merged.push(allParsedForFocusDay[p]);
+    }
 
-    const emptyMsg = latestHabits.length === 0
-      ? "Add habits in the left panel to see habit suggestions here."
-      : "No habit-aligned suggestions for this day yet.";
+    const emptyMsg =
+      latestHabits.length === 0
+        ? "Add habits in the left panel for habit deadlines here, or use chat — timetable lines dated for this day appear as suggestions."
+        : "No suggestions for this day yet. Send a planner chat with bullets dated for this day, or rely on habit deadlines above.";
     renderTaskCards(agendaList, merged, emptyMsg, {
       allowAddToSchedule: true,
+      savedPlanTasksForDupCheck: latestSavedPlanTasks,
     });
   }
 
@@ -2374,6 +3026,8 @@
                 lastImportDefaultPlanDateIso && /^\d{4}-\d{2}-\d{2}$/.test(lastImportDefaultPlanDateIso)
                   ? lastImportDefaultPlanDateIso
                   : lastAssistClientDateIso,
+              client_clock_date: lastAssistClientDateIso,
+              planner_focus_date_iso: focusDateIso,
             }),
           });
         } catch (_) {}
@@ -2392,7 +3046,8 @@
     }
   }
 
-  async function runChatTurn(raw) {
+  /** @param {(function(): void) | undefined} onUserBubblePainted Called right after the user bubble is in the transcript (queue may dequeue here). */
+  async function runChatTurn(raw, onUserBubblePainted) {
     /** Wall-clock safety valve so a hung ``ReadableStream`` cannot strand the composer forever. */
     const CHAT_FETCH_TIMEOUT_MS = 600000;
     const chatAbort = new AbortController();
@@ -2416,7 +3071,13 @@
 
     try {
       bubble("user", raw);
+      if (typeof onUserBubblePainted === "function") {
+        try {
+          onUserBubblePainted();
+        } catch (_) {}
+      }
       await syncHabitsFromStorage();
+      await syncCalendarBeforeChat();
       const habitsBlock = buildHabitsBlockForModel(latestHabits);
       const cc = clientCalendarPayload();
       lastAssistClientDateIso = cc.date_iso;
@@ -2744,26 +3405,20 @@
 
   async function handleSend() {
     const raw = promptEl.value.trim();
-    if (!raw) return;
+    if (!raw) {
+      if (llmOnline && pendingChatQueue.length > 0 && !chatQueueDrainPromise && !requestInFlight) {
+        ensureChatQueueDrain();
+      }
+      return;
+    }
     if (!llmOnline) {
       statusEl.textContent =
         "LLM API offline — set VLLM_14B_BASE_URL and run scheduler_llm_gateway.py (samples-vllm)";
       return;
     }
-    if (requestInFlight) {
-      statusEl.textContent =
-        "Wait for the current reply to finish before sending another message.";
-      return;
-    }
     promptEl.value = "";
-    try {
-      await runChatTurn(raw);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("runChatTurn rejected", err);
-      statusEl.textContent =
-        "Send failed: " + String(err && err.message ? err.message : err);
-    }
+    enqueueChatUserText(raw);
+    ensureChatQueueDrain();
   }
 
   sendBtn.addEventListener("click", handleSend);
@@ -2814,6 +3469,21 @@
     resetChatAndPreviewUi("(thread cleared)");
   });
 
+  function lastAssistantRawFromHistory() {
+    for (let i = chatHistory.length - 1; i >= 0; i--) {
+      const h = chatHistory[i];
+      if (
+        h &&
+        h.role === "assistant" &&
+        typeof h.content === "string" &&
+        h.content.trim()
+      ) {
+        return h.content;
+      }
+    }
+    return "";
+  }
+
   async function hydrateConversationFromServer() {
     try {
       const r = await fetch("/api/conversation?thread_id=default", { cache: "no-store" });
@@ -2830,15 +3500,16 @@
       });
       clearChatTranscript();
       rerenderChatFromHistory();
+      refreshLlmSchedule(lastAssistantRawFromHistory());
     } catch (_) {}
   }
 
   refreshFocusChrome();
   void reloadDbAgenda();
-  void hydrateConversationFromServer();
-  void syncHabitsFromStorage().then(function () {
-    refreshLlmSchedule("");
-  });
+  void (async function plannerBootstrapHydratePreview() {
+    await hydrateConversationFromServer();
+    await syncHabitsFromStorage();
+  })();
 })();
   </script>
 </body>
