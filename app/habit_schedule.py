@@ -172,8 +172,135 @@ def _cheat_dates(habit: dict[str, Any]) -> list[str]:
     return sorted(out)
 
 
+DEFAULT_TIME_TARGET_MINUTES = 20
+MAX_TIME_TARGET_MINUTES = 240
+
+
+def _normalize_habit_type(habit: dict[str, Any]) -> str:
+    raw = str(habit.get("habit_type") or "").strip().lower()
+    if raw == "worknight":
+        return "default"
+    if raw == "time":
+        return "time"
+    return "default"
+
+
 def _is_worknight(habit: dict[str, Any]) -> bool:
+    if habit.get("worknight_mode"):
+        return True
     return str(habit.get("habit_type") or "").strip().lower() == "worknight"
+
+
+def _is_time(habit: dict[str, Any]) -> bool:
+    return _normalize_habit_type(habit) == "time"
+
+
+def _time_target_minutes(habit: dict[str, Any]) -> int:
+    raw = habit.get("time_target_minutes")
+    try:
+        n = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        n = DEFAULT_TIME_TARGET_MINUTES
+    return max(1, min(MAX_TIME_TARGET_MINUTES, n))
+
+
+def _time_program_days(start_iso: str, n: int, worknight: bool) -> list[str]:
+    """First *n* program days from ``start_iso`` (Sun–Thu only when *worknight*)."""
+    if _parse_date(start_iso) is None or n < 1:
+        return []
+    out: list[str] = []
+    cursor = _first_active_on_or_after(start_iso) if worknight else start_iso
+    guard = 0
+    while len(out) < n and guard < 10000:
+        guard += 1
+        if not worknight or _sun_thru_thu(cursor):
+            out.append(cursor)
+        if len(out) >= n:
+            break
+        cursor = _next_active_after(cursor) if worknight else _add_days(cursor, 1)
+    return out
+
+
+def _phase1_stats_time(
+    start_iso: str, marks: list[str], n: int, worknight: bool
+) -> tuple[list[str], int, bool]:
+    program_days = _time_program_days(start_iso, n, worknight)
+    if not program_days:
+        return [], 0, False
+    mark_set = set(marks)
+    earned = sum(i + 1 for i, pd in enumerate(program_days) if pd in mark_set)
+    satisfied = all(pd in mark_set for pd in program_days)
+    return program_days, earned, satisfied
+
+
+def _phase2_boundary_date_time(
+    start_iso: str, marks: list[str], n: int, worknight: bool
+) -> str | None:
+    program_days, _, satisfied = _phase1_stats_time(start_iso, marks, n, worknight)
+    if not satisfied or not program_days:
+        return None
+    return program_days[-1]
+
+
+def _time_phase1_day_index(program_days: list[str], target_iso: str) -> int:
+    try:
+        return program_days.index(target_iso)
+    except ValueError:
+        return -1
+
+
+def _time_duration_for_phase1_day(program_days: list[str], target_iso: str) -> int:
+    idx = _time_phase1_day_index(program_days, target_iso)
+    return idx + 1 if idx >= 0 else DEFAULT_TIME_TARGET_MINUTES
+
+
+def _phase1_requires_date_time(
+    *,
+    title: str,
+    start_iso: str,
+    target_iso: str,
+    marks: set[str],
+    program_days: list[str],
+) -> HabitRequirement | None:
+    idx = _time_phase1_day_index(program_days, target_iso)
+    if idx < 0:
+        return None
+    for i in range(idx):
+        if program_days[i] not in marks:
+            return None
+    if target_iso in marks:
+        return None
+    mins = _time_duration_for_phase1_day(program_days, target_iso)
+    need = idx + 1
+    return HabitRequirement(
+        title=title,
+        target_date=target_iso,
+        duration_minutes=mins,
+        reason=f"time phase 1 day {need}/{len(program_days)} · {mins} min",
+    )
+
+
+def _latest_phase1_deadline_iso_time(habit: dict[str, Any], current_iso: str) -> str | None:
+    start_raw = habit.get("start")
+    if not isinstance(start_raw, str) or _parse_date(start_raw) is None:
+        return None
+    if _parse_date(current_iso) is None:
+        return None
+    start_iso = start_raw
+    n = _time_target_minutes(habit)
+    worknight = _is_worknight(habit)
+    marks_set = set(_marked_dates(habit))
+    program_days, _, satisfied = _phase1_stats_time(start_iso, sorted(marks_set), n, worknight)
+    if satisfied or not program_days:
+        return None
+    cursor_iso = current_iso if current_iso > start_iso else start_iso
+    for pd in program_days:
+        if pd in marks_set:
+            continue
+        if pd >= cursor_iso:
+            return pd
+        return cursor_iso
+    return None
 
 
 def _week_index_uncapped(start_iso: str, day_iso: str) -> int:
@@ -1030,6 +1157,146 @@ def derive_habit_program_state(habit: dict[str, Any], anchor_iso: str | None = N
     marks_list = _marked_dates(habit)
     marks_set = set(marks_list)
 
+    if _is_time(habit):
+        n = _time_target_minutes(habit)
+        worknight = _is_worknight(habit)
+        program_days, phase1_earned, phase1_satisfied = _phase1_stats_time(
+            start_iso, marks_list, n, worknight
+        )
+        phase1_cap = n * (n + 1) // 2
+        day_ui = 0
+        for i, pd in enumerate(program_days):
+            if pd <= anchor_iso:
+                day_ui = i
+            else:
+                break
+        if phase1_satisfied:
+            day_ui = n - 1
+        else:
+            for i, pd in enumerate(program_days):
+                if pd not in marks_set:
+                    day_ui = i
+                    break
+
+        boundary = (
+            _phase2_boundary_date_time(start_iso, marks_list, n, worknight)
+            if phase1_satisfied
+            else None
+        )
+        phase2_start = None
+        if boundary is not None:
+            phase2_start = (
+                _first_active_on_or_after(_add_days(boundary, 1))
+                if worknight
+                else _add_days(boundary, 1)
+            )
+
+        scan_iso = anchor_iso
+        if marks_list:
+            scan_iso = max(scan_iso, marks_list[-1])
+        if boundary is not None and phase2_start is not None:
+            scan_iso = max(scan_iso, phase2_start)
+
+        if worknight and boundary is not None:
+            cheats = set(_cheat_dates(habit))
+            cheat_suns = _cheat_week_sundays(cheats)
+            forgiving_pts, forgiving_done = _forgiving_phase2_points_and_complete_worknight(
+                boundary, marks_set
+            )
+            strict_earned, strict_complete, strict_violation = _strict_phase2_scan_metrics_worknight(
+                boundary, marks_set, scan_iso, cheat_suns
+            )
+            program_done = bool(
+                _habit_program_complete_worknight(boundary, marks_set, scan_iso, cheat_suns)
+            )
+        elif boundary is not None:
+            cheat_suns = set()
+            forgiving_pts, forgiving_done = _forgiving_phase2_points_and_complete(
+                boundary, marks_set
+            )
+            strict_earned, strict_complete, strict_violation = _strict_phase2_scan_metrics(
+                boundary, marks_set, scan_iso
+            )
+            program_done = bool(_habit_program_complete(boundary, marks_set, scan_iso))
+        else:
+            cheat_suns = set()
+            forgiving_pts, forgiving_done = (0, False)
+            strict_earned, strict_complete, strict_violation = (0, False, False)
+            program_done = False
+
+        if boundary is not None:
+            forgiving_pts = max(forgiving_pts, strict_earned)
+
+        if program_done:
+            phase = "done"
+        elif phase1_satisfied and boundary is not None:
+            phase = "phase2"
+        else:
+            phase = "phase1"
+
+        phase2_block = None
+        if boundary is not None and phase2_start is not None:
+            phase2_leg_ui_day = _add_days(anchor_iso, 1) if anchor_iso in marks_set else anchor_iso
+            nominal: list[str] = []
+            if not worknight:
+                nominal = nominal_phase2_rest_dates(phase2_start)
+            if worknight:
+                st_tomorrow = _phase2_state_at_start_worknight(
+                    boundary, marks_set, phase2_leg_ui_day, cheat_suns
+                )
+                cur_target = st_tomorrow.target_len if not st_tomorrow.before_phase2 else 8
+                cur_run = st_tomorrow.run if not st_tomorrow.before_phase2 else 0
+                if st_tomorrow.violation:
+                    cur_target = None
+                    cur_run = None
+                eff_rest = None
+            elif strict_violation:
+                cur_target = None
+                cur_run = None
+                eff_rest = _effective_next_rest_iso_calendar(boundary, marks_set, anchor_iso)
+            else:
+                leg_prog = _phase2_leg_progress_from_nominal_rests(
+                    phase2_start, marks_set, anchor_iso
+                )
+                if leg_prog is None:
+                    cur_target = None
+                    cur_run = None
+                else:
+                    cur_run, cur_target = leg_prog
+                eff_rest = _effective_next_rest_iso_calendar(boundary, marks_set, anchor_iso)
+            phase2_block = {
+                "boundary_iso": boundary,
+                "phase2_start_iso": phase2_start,
+                "nominal_rest_dates": nominal,
+                "strict": {
+                    "violation": strict_violation,
+                    "complete": strict_complete,
+                    "earned_points": strict_earned,
+                },
+                "forgiving": {"points": forgiving_pts, "complete": forgiving_done},
+                "effective_next_rest_iso": eff_rest if not worknight else None,
+                "current_leg_target_len": cur_target,
+                "current_leg_run_start_of_tomorrow": cur_run,
+                "time_target_minutes": n,
+            }
+
+        return {
+            "phase": phase,
+            "anchor_iso": anchor_iso,
+            "title": title,
+            "habit_type": "time",
+            "time_target_minutes": n,
+            "worknight_mode": worknight,
+            "phase1": {
+                "program_days": program_days,
+                "satisfied": phase1_satisfied,
+                "current_day_ui_index": day_ui,
+                "points_earned": phase1_earned,
+                "points_cap": phase1_cap,
+            },
+            "phase2": phase2_block,
+        }
+
     if _is_worknight(habit):
         cheats = set(_cheat_dates(habit))
         cheat_suns = _cheat_week_sundays(cheats)
@@ -1286,6 +1553,73 @@ def required_habits_for_date(
         duration_minutes = _habit_duration_minutes(raw, title, default_minutes)
         marks_list = sorted(marks)
 
+        if _is_time(raw):
+            n = _time_target_minutes(raw)
+            worknight = _is_worknight(raw)
+            program_days, _, phase1_satisfied = _phase1_stats_time(
+                start_iso, marks_list, n, worknight
+            )
+            if not phase1_satisfied:
+                req = _phase1_requires_date_time(
+                    title=title,
+                    start_iso=start_iso,
+                    target_iso=target_date_iso,
+                    marks=marks,
+                    program_days=program_days,
+                )
+                if req is not None:
+                    out.append(req)
+                continue
+
+            boundary = _phase2_boundary_date_time(start_iso, marks_list, n, worknight)
+            if boundary is None:
+                continue
+            scan_iso = target_date_iso
+            if marks_list:
+                scan_iso = max(scan_iso, marks_list[-1])
+
+            if worknight:
+                cheats = set(_cheat_dates(raw))
+                cheat_suns = _cheat_week_sundays(cheats)
+                if _habit_program_complete_worknight(boundary, marks, scan_iso, cheat_suns):
+                    continue
+                if not _sun_thru_thu(target_date_iso):
+                    continue
+                state = _phase2_state_at_start_worknight(
+                    boundary, marks, target_date_iso, cheat_suns
+                )
+                if state.before_phase2 or state.complete or state.need_rest or state.violation:
+                    continue
+                out.append(
+                    HabitRequirement(
+                        title=title,
+                        target_date=target_date_iso,
+                        duration_minutes=n,
+                        reason=(
+                            f"time phase 2 streak night · {n} min; "
+                            f"current run {state.run}/{state.target_len} would reset if skipped"
+                        ),
+                    )
+                )
+            else:
+                if _habit_program_complete(boundary, marks, scan_iso):
+                    continue
+                state = _phase2_state_at_start(boundary, marks, target_date_iso)
+                if state.before_phase2 or state.complete or state.need_rest or state.violation:
+                    continue
+                out.append(
+                    HabitRequirement(
+                        title=title,
+                        target_date=target_date_iso,
+                        duration_minutes=n,
+                        reason=(
+                            f"time phase 2 streak day · {n} min; "
+                            f"current run {state.run}/{state.target_len} would reset if skipped"
+                        ),
+                    )
+                )
+            continue
+
         if _is_worknight(raw):
             cheats = set(_cheat_dates(raw))
             cheat_suns = _cheat_week_sundays(cheats)
@@ -1376,6 +1710,91 @@ def required_habits_for_date(
     return out
 
 
+def _habit_without_mark_on(habit: dict[str, Any], day_iso: str) -> dict[str, Any]:
+    clone = dict(habit)
+    raw_days = habit.get("days")
+    if isinstance(raw_days, dict):
+        clone["days"] = {
+            k: v for k, v in raw_days.items() if k != day_iso and v and _parse_date(k) is not None
+        }
+    else:
+        clone["days"] = {}
+    return clone
+
+
+def mandatory_habits_for_planner_date(
+    snapshot: dict[str, Any],
+    target_date_iso: str,
+    *,
+    default_minutes: int = DEFAULT_HABIT_MINUTES,
+) -> list[dict[str, Any]]:
+    """Habits that must be logged on ``target_date_iso``, with calendar completion state."""
+    if _parse_date(target_date_iso) is None:
+        return []
+
+    habits = snapshot.get("habits")
+    if not isinstance(habits, list):
+        return []
+
+    pending_by_title = {
+        r.title: r
+        for r in required_habits_for_date(
+            snapshot, target_date_iso, default_minutes=default_minutes
+        )
+    }
+    out: list[dict[str, Any]] = []
+
+    for raw in habits:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title") or "Habit").strip() or "Habit"
+        hid = raw.get("id")
+        if not isinstance(hid, str) or not hid.strip():
+            continue
+        marks = set(_marked_dates(raw))
+        logged = target_date_iso in marks
+
+        if title in pending_by_title:
+            req = pending_by_title[title]
+            out.append(
+                {
+                    "habit_id": hid.strip(),
+                    "title": title,
+                    "duration_minutes": req.duration_minutes,
+                    "target_date": target_date_iso,
+                    "logged": False,
+                    "reason": req.reason,
+                }
+            )
+            continue
+
+        if not logged:
+            continue
+
+        clone = _habit_without_mark_on(raw, target_date_iso)
+        reqs = required_habits_for_date(
+            {"habits": [clone]},
+            target_date_iso,
+            default_minutes=default_minutes,
+        )
+        if not reqs or reqs[0].title != title:
+            continue
+        req = reqs[0]
+        out.append(
+            {
+                "habit_id": hid.strip(),
+                "title": title,
+                "duration_minutes": req.duration_minutes,
+                "target_date": target_date_iso,
+                "logged": True,
+                "reason": req.reason,
+            }
+        )
+
+    out.sort(key=lambda row: (row.get("logged") is True, str(row.get("title") or "").lower()))
+    return out
+
+
 def required_habits_context_block(snapshot: dict[str, Any], target_date_iso: str) -> str | None:
     required = required_habits_for_date(snapshot, target_date_iso)
     if not required:
@@ -1405,6 +1824,8 @@ def latest_phase1_deadline_iso(habit: dict[str, Any], current_iso: str) -> str |
     phase 1 is already satisfied for this habit, or the snapshot lacks a usable
     start/current date.
     """
+    if _is_time(habit):
+        return _latest_phase1_deadline_iso_time(habit, current_iso)
     if _is_worknight(habit):
         return _latest_phase1_deadline_iso_worknight(habit, current_iso)
 
@@ -1444,6 +1865,75 @@ def latest_phase1_deadline_iso(habit: dict[str, Any], current_iso: str) -> str |
             return cursor_iso
         return avail[len(avail) - remaining]
     return None
+
+
+def _phase2_status_for_target_time(
+    habit: dict[str, Any], marks_set: set[str], target_iso: str
+) -> dict[str, Any]:
+    start_raw = habit.get("start")
+    if not isinstance(start_raw, str) or _parse_date(start_raw) is None:
+        return {"kind": "phase2-pending"}
+    start_iso = start_raw
+    n = _time_target_minutes(habit)
+    worknight = _is_worknight(habit)
+    marks_list = sorted(marks_set)
+    _, _, phase1_satisfied = _phase1_stats_time(start_iso, marks_list, n, worknight)
+    if not phase1_satisfied:
+        return {"kind": "phase2-pending"}
+    boundary = _phase2_boundary_date_time(start_iso, marks_list, n, worknight)
+    if boundary is None:
+        return {"kind": "phase2-pending"}
+    if worknight:
+        cheat_suns = _cheat_week_sundays(set(_cheat_dates(habit)))
+        scan_iso = target_iso
+        if marks_list:
+            scan_iso = max(scan_iso, marks_list[-1])
+        if _habit_program_complete_worknight(boundary, marks_set, scan_iso, cheat_suns):
+            return {"kind": "phase2-complete"}
+        state = _phase2_state_at_start_worknight(boundary, marks_set, target_iso, cheat_suns)
+        if state.before_phase2:
+            return {
+                "kind": "phase2-before",
+                "first_iso": _first_active_on_or_after(_add_days(boundary, 1)),
+            }
+        if state.violation:
+            return {"kind": "phase2-violation"}
+        if state.complete:
+            return {"kind": "phase2-complete"}
+        if state.need_rest:
+            nxt = target_iso
+            for _ in range(14):
+                nxt = _add_days(nxt, 1)
+                if _sun_thru_thu(nxt):
+                    return {"kind": "phase2-rest", "next_active_iso": nxt}
+            return {"kind": "phase2-rest", "next_active_iso": _add_days(target_iso, 1)}
+        return {
+            "kind": "phase2-active",
+            "run": state.run,
+            "target_len": state.target_len,
+        }
+    scan_iso = target_iso
+    if marks_list:
+        scan_iso = max(scan_iso, marks_list[-1])
+    if _habit_program_complete(boundary, marks_set, scan_iso):
+        return {"kind": "phase2-complete"}
+    state = _phase2_state_at_start(boundary, marks_set, target_iso)
+    if state.before_phase2:
+        return {"kind": "phase2-before", "first_iso": _add_days(boundary, 1)}
+    if state.violation:
+        return {"kind": "phase2-violation"}
+    if state.complete:
+        return {"kind": "phase2-complete"}
+    if state.need_rest:
+        return {
+            "kind": "phase2-rest",
+            "next_active_iso": _add_days(target_iso, 1),
+        }
+    return {
+        "kind": "phase2-active",
+        "run": state.run,
+        "target_len": state.target_len,
+    }
 
 
 def _phase2_status_for_target(
@@ -1522,7 +2012,32 @@ def non_required_habits_context_block(
             )
             continue
         marks_list = sorted(marks_set)
-        if _is_worknight(raw):
+        if _is_time(raw):
+            n = _time_target_minutes(raw)
+            program_days, _, phase1_satisfied = _phase1_stats_time(
+                start_iso, marks_list, n, _is_worknight(raw)
+            )
+            if not phase1_satisfied:
+                deadline = latest_phase1_deadline_iso(raw, target_date_iso)
+                idx = _time_phase1_day_index(program_days, target_date_iso)
+                if idx >= 0:
+                    done = sum(1 for d in program_days[: idx + 1] if d in marks_set)
+                    need = idx + 1
+                    mins = need
+                    progress = f"time phase 1 day {need}/{n} is {done}/{need} ({mins} min)"
+                else:
+                    progress = "time phase 1 in progress"
+                if deadline is None or deadline == target_date_iso:
+                    lines.append(
+                        f"- {title}: {progress}; latest deadline {target_date_iso} (today)."
+                    )
+                else:
+                    lines.append(
+                        f"- {title}: {progress}; latest deadline {deadline}; skip on {target_date_iso}."
+                    )
+                continue
+            status = _phase2_status_for_target_time(raw, marks_set, target_date_iso)
+        elif _is_worknight(raw):
             cheats = set(_cheat_dates(raw))
             cheat_suns = _cheat_week_sundays(cheats)
             actual, phase1_satisfied = _phase1_stats_worknight(start_iso, marks_list, cheats)
@@ -1584,8 +2099,17 @@ def non_required_habits_context_block(
         elif kind == "phase2-rest":
             nxt = status.get("next_active_iso", "")
             nominal_hint = ""
-            if not _is_worknight(raw):
+            if not _is_worknight(raw) and not _is_time(raw):
                 bd = _phase2_boundary_date(start_iso, marks_list)
+                if bd is not None:
+                    p2_start = _add_days(bd, 1)
+                    for nd in nominal_phase2_rest_dates(p2_start):
+                        if nd >= target_date_iso:
+                            nominal_hint = f" Nominal next mandatory rest (on-time schedule): {nd}."
+                            break
+            elif _is_time(raw) and not _is_worknight(raw):
+                n = _time_target_minutes(raw)
+                bd = _phase2_boundary_date_time(start_iso, marks_list, n, False)
                 if bd is not None:
                     p2_start = _add_days(bd, 1)
                     for nd in nominal_phase2_rest_dates(p2_start):
@@ -1635,6 +2159,9 @@ def habits_snapshot_with_required_rows(
         }
         for r in reqs
     ]
+    out["mandatory_for_planner_date"] = mandatory_habits_for_planner_date(
+        snapshot, target_date_iso
+    )
     return out
 
 
@@ -1643,6 +2170,7 @@ __all__ = [
     "HabitRequirement",
     "derive_habit_program_state",
     "habits_snapshot_with_required_rows",
+    "mandatory_habits_for_planner_date",
     "latest_phase1_deadline_iso",
     "nominal_phase2_rest_dates",
     "non_required_habits_context_block",

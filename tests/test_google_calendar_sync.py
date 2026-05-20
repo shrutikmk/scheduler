@@ -442,3 +442,85 @@ def test_delete_all_calendar_events_skips_when_sync_off(
     removed, errs = mgr.delete_all_calendar_events_for_plan_date("2026-05-09")
     assert removed == 0
     assert errs == []
+
+
+def test_resync_plan_dates_to_calendar(tmp_path: Path, store: SchedulerStore) -> None:
+    mgr = _mgr(tmp_path, store)
+    store.set_gcal_sync_state(calendar_id="primary", enabled=True)
+    store.replace_tasks_for_dates(
+        ["2026-05-09"], [ScheduleRow("a", "2026-05-09", "8:00 AM", 60, "Coding", "pending")]
+    )
+    _attach(store, "a", "evt-old")
+
+    with patch.object(
+        mgr, "delete_all_calendar_events_for_plan_date", return_value=(2, [])
+    ) as del_mock:
+        result = mgr.resync_plan_dates_to_calendar(["2026-05-09"])
+
+    del_mock.assert_called_once_with("2026-05-09")
+    assert result == {
+        "dates": ["2026-05-09"],
+        "events_deleted": 2,
+        "tasks_reset": 1,
+        "errors": [],
+    }
+    rows = store.list_schedule_tasks("2026-05-09")
+    assert rows[0]["gcal_event_id"] is None
+    assert len(store.list_gcal_dirty_rows()) == 1
+
+
+def test_resync_plan_dates_skips_when_sync_off(tmp_path: Path, store: SchedulerStore) -> None:
+    mgr = _mgr(tmp_path, store)
+    store.replace_tasks_for_dates(
+        ["2026-05-09"], [ScheduleRow("a", "2026-05-09", "8:00 AM", 60, "Coding", "pending")]
+    )
+    _attach(store, "a", "evt-old")
+    result = mgr.resync_plan_dates_to_calendar(["2026-05-09"])
+    assert result["events_deleted"] == 0
+    assert result["tasks_reset"] == 0
+    assert store.list_schedule_tasks("2026-05-09")[0]["gcal_event_id"] == "evt-old"
+
+
+def test_resync_then_push_creates_fresh_events(
+    tmp_path: Path, store: SchedulerStore
+) -> None:
+    mgr = _mgr(tmp_path, store)
+    store.set_gcal_sync_state(calendar_id="primary", enabled=True)
+    store.replace_tasks_for_dates(
+        ["2026-05-09"], [ScheduleRow("a", "2026-05-09", "8:00 AM", 60, "Coding", "pending")]
+    )
+    _attach(store, "a", "evt-old")
+    store.merge_tasks_from_assistant(
+        ["2026-05-09"],
+        [ScheduleRow("b", "2026-05-09", "8:00 AM", 60, "Deep Work", "pending")],
+    )
+    titles = {r["title"] for r in store.list_schedule_tasks("2026-05-09")}
+    assert titles == {"Coding", "Deep Work"}
+
+    with patch.object(
+        mgr, "delete_all_calendar_events_for_plan_date", return_value=(1, [])
+    ):
+        mgr.resync_plan_dates_to_calendar(["2026-05-09"])
+
+    created_ids: list[str] = []
+
+    def fake_insert(*, access_token: str, calendar_id: str, body: dict, timeout: float = 30.0):
+        eid = f"evt-{len(created_ids) + 1}"
+        created_ids.append(eid)
+        return {"id": eid, "etag": '"v1"'}
+
+    list_page = {"items": [], "nextSyncToken": "sync-r"}
+    with (
+        patch.object(
+            CalendarSyncManager, "silent_credentials", return_value=(_FakeCreds(), None, None)
+        ),
+        patch("google_calendar_sync.insert_event", side_effect=fake_insert),
+        patch("google_calendar_sync.list_events_page", return_value=list_page),
+    ):
+        out = mgr.sync_once()
+
+    assert out.pushed_create == 2
+    assert created_ids == ["evt-1", "evt-2"]
+    for row in store.list_schedule_tasks("2026-05-09"):
+        assert row["gcal_event_id"] in created_ids
+        assert row["gcal_event_id"] != "evt-old"

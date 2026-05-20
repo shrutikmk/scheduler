@@ -288,6 +288,227 @@ body {
   outline-offset: 2px;
 }
 
+.app-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--soft);
+  color: var(--text);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.app-menu-trigger:hover {
+  background: var(--nav-link-hover-bg);
+  border-color: var(--border);
+}
+
+.app-menu-trigger:focus-visible {
+  outline: 2px solid var(--input-focus-border);
+  outline-offset: 2px;
+}
+
+.app-menu-icon {
+  display: block;
+  width: 1.05rem;
+  height: 0.72rem;
+}
+
+.app-menu-icon line {
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.app-settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  background: rgba(30, 40, 55, 0.38);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-settings-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.app-settings-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  width: min(18.5rem, 92vw);
+  max-width: 100%;
+  height: 100%;
+  height: 100dvh;
+  box-sizing: border-box;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: -12px 0 40px rgba(30, 50, 80, 0.14);
+  transform: translateX(100%);
+  transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+  color: var(--text);
+}
+
+.app-settings-panel.open {
+  transform: translateX(0);
+}
+
+.app-settings-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--panel-translucent);
+  backdrop-filter: blur(14px);
+}
+
+.app-settings-panel-title {
+  font-size: 0.92rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.app-settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--text);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-settings-close:hover {
+  background: var(--nav-link-hover-bg);
+}
+
+.app-settings-close:focus-visible {
+  outline: 2px solid var(--input-focus-border);
+  outline-offset: 2px;
+}
+
+.app-settings-panel-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.app-settings-section {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+}
+
+.app-settings-label {
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.app-settings-panel .theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  padding: 0.14rem;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid var(--border);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.app-settings-panel .theme-toggle button {
+  padding: 0.22rem 0.62rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+  font-family: inherit;
+}
+
+.app-settings-panel .theme-toggle button:hover {
+  color: var(--text);
+}
+
+.app-settings-panel .theme-toggle button.active {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: var(--shadow-soft);
+}
+
+.app-settings-panel .theme-toggle button:focus-visible {
+  outline: 2px solid var(--input-focus-border);
+  outline-offset: 2px;
+}
+
+.app-settings-panel .llm-pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: none;
+  min-height: 2.1rem;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.app-settings-panel .llm-pill.sync-btn {
+  width: 100%;
+  font-family: inherit;
+}
+
+body.app-settings-open {
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-settings-panel,
+  .app-settings-backdrop {
+    transition: none;
+  }
+}
+
 /* Finances page shell */
 .fin-app-frame {
   display: flex;

@@ -721,6 +721,30 @@ class CalendarSyncManager:
 
         return removed, errors
 
+    def resync_plan_dates_to_calendar(self, plan_dates: list[str]) -> dict[str, Any]:
+        """Wipe Calendar events for each plan date and reset local links for a fresh push."""
+        uniq = sorted({d.strip() for d in plan_dates if isinstance(d, str) and d.strip()})
+        result: dict[str, Any] = {
+            "dates": uniq,
+            "events_deleted": 0,
+            "tasks_reset": 0,
+            "errors": [],
+        }
+        if not uniq:
+            return result
+        state = self._store.get_gcal_sync_state()
+        if not state or not state.get("enabled"):
+            return result
+        for plan_date_iso in uniq:
+            removed, errs = self.delete_all_calendar_events_for_plan_date(plan_date_iso)
+            result["events_deleted"] = int(result["events_deleted"]) + removed
+            if errs:
+                result["errors"].extend(errs)
+            result["tasks_reset"] = int(result["tasks_reset"]) + self._store.reset_gcal_links_for_plan_dates(
+                [plan_date_iso]
+            )
+        return result
+
     # ---- main entry points ----
 
     def sync_once(self) -> SyncOutcome:

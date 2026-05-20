@@ -5,19 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Habit Builder</title>
   <!-- Theme before paint + embed layout class (iframe from day_scheduler shell). -->
+  <script src="heartbeat_theme.js"></script>
   <script>
     (function () {
       try {
-        var theme = "light";
         var url = new URL(window.location.href);
         var qp = url.searchParams.get("theme");
-        if (qp === "light" || qp === "dark") {
-          theme = qp;
+        if (window.HeartbeatTheme.THEMES.indexOf(qp) >= 0) {
+          document.documentElement.dataset.theme = qp;
         } else {
-          var h = new Date().getHours();
-          theme = h >= 7 && h < 19 ? "light" : "dark";
+          HeartbeatTheme.paintDocumentTheme();
         }
-        document.documentElement.dataset.theme = theme;
       } catch (_) {
         document.documentElement.dataset.theme = "light";
       }
@@ -30,26 +28,16 @@
 </head>
 <body>
   <main class="app-shell">
-  <header class="hero">
-    <div class="hero-top">
-      <div>
-        <h1>Habit Builder</h1>
-        <p class="muted">Track each habit with its own start date, calendar, and progress.</p>
-      </div>
-      <span class="chip">Local save</span>
-    </div>
-    <p id="storage-status" class="muted">Loading saved data…</p>
-  </header>
-
   <section class="section-card add-card" aria-label="Add a habit">
-    <div class="row">
-      <input type="text" id="title-input" placeholder="Habit title" maxlength="120" />
-      <label class="start-label"
-        >Start
-        <input type="date" id="start-input" aria-label="Program start date (week 1 is the Sunday–Saturday week containing this date)" /></label
-      >
-      <button type="button" id="add-habit" class="primary-button">Add</button>
-    </div>
+    <button
+      type="button"
+      id="open-add-habit"
+      class="primary-button add-habit-trigger"
+      aria-haspopup="dialog"
+      aria-expanded="false"
+    >
+      Add habit
+    </button>
   </section>
 
   <details class="section-card" open>
@@ -65,17 +53,23 @@
 
   <div id="detail" class="panel" hidden>
     <div class="detail-head">
-      <div>
-        <span class="muted">Selected habit</span>
-        <strong id="detail-title"></strong>
-      </div>
-      <button type="button" class="danger" id="delete-habit">Delete habit</button>
+      <span class="muted">Selected habit</span>
+      <strong id="detail-title"></strong>
     </div>
-    <div class="row">
-      <label class="start-label"
-        >Program start
-        <input type="date" id="detail-start-input" aria-label="Change program start date" /></label
-      >
+    <div class="program-start-block">
+      <span class="program-start-caption muted">Program start</span>
+      <div class="program-start-picker">
+        <span id="detail-start-display" class="program-start-date"></span>
+        <label class="program-start-edit-wrap">
+          <span class="program-start-edit muted">Change</span>
+          <input
+            type="date"
+            id="detail-start-input"
+            class="program-start-input"
+            aria-label="Change program start date"
+          />
+        </label>
+      </div>
     </div>
 
     <details class="detail-section" open>
@@ -113,16 +107,9 @@
           <button type="button" id="cal-next" aria-label="Next month">→</button>
         </div>
         <div class="cal-grid" id="cal-root"></div>
-        <p class="cal-legend muted" id="cal-legend-default">
+        <p class="cal-legend muted" id="cal-legend">
           <span class="cal-legend-swatch rest-effective" aria-hidden="true"></span>
-          Effective mandatory rest (from your logged streak + planner hints)
-          <span class="cal-legend-gap"></span>
-          <span class="cal-legend-swatch rest-nominal" aria-hidden="true"></span>
-          Nominal rest (on-time schedule from Phase&nbsp;2 start; advisory if you’re ahead or behind)
-        </p>
-        <p class="cal-legend muted" id="cal-legend-worknight" hidden>
-          Highlighted nights match mandatory rests on the long-run ladder (Sun–Thu). Nominal pre-scheduled rests apply to
-          calendar habits only.
+          Mandatory rest day
         </p>
       </div>
     </details>
@@ -131,19 +118,23 @@
   <details class="rules rules-card">
     <summary>How the habit program works</summary>
     <p>
-      Phase 1 uses seven <strong>Sunday–Saturday</strong> calendar weeks. Week 1 is the week that contains your program
+      <strong>Default</strong> habits use seven <strong>Sunday–Saturday</strong> calendar weeks in Phase 1. Week 1 is the week that contains your program
       start; week <em>k</em> needs <em>k</em> logged days anywhere that week (only on/after your start date counts).
+      <strong>Time</strong> habits ramp Phase 1 from 1 minute on day 1 up to <em>n</em> minutes on day <em>n</em> (you set <em>n</em> when creating the habit).
       After Phase 1, <strong>two Phase 2 models</strong> run in parallel: <strong>Progress</strong> (accent bar)
       milestones 8→90 can be “packed” into your <em>latest</em> contiguous streak; any <strong>90-day</strong> streak in
-      Phase 2 completes the program on that path.       <strong>Long run</strong> (green bar) is the original ladder with required
+      Phase 2 completes the program on that path. Time habits hold <em>n</em> minutes per active Phase 2 day.
+      <strong>Long run</strong> (green bar) is the original ladder with required
       rest days between streaks — same rules the day planner deadlines use for streak requirements.
+      <strong>Worknight</strong> (settings toggle) counts Sun–Thu only; Fri/Sat are ignored. Double-tap a calendar day for a cheat freeze (max 2 per 30 days).
       In details, each long-run <strong>leg</strong> is labeled <strong>L8</strong>, <strong>L9</strong>, …
       <strong>L90</strong>: the number is how many consecutive days (or Sun–Thu work nights) that segment
       needs before the next mandatory blank day.
       The calendar shows <strong>nominal</strong> rest days from your Phase&nbsp;2 start as a guide when following the ladder exactly;
       <strong>effective</strong> rests (from your logs + planner hints) override how cells are highlighted when they differ.
       Overall
-      <strong>complete</strong> when either path reaches 100%. 100% points = 4095 total. Your habits are written to
+      <strong>complete</strong> when either path reaches 100%. Default habits total 4095 points; Time habits use a dynamic Phase 1 cap plus 4067 Phase 2 points.
+      Your habits are written to
       IndexedDB after every change and mirrored to localStorage for recovery. Data stay on this device only.
     </p>
   </details>

@@ -583,6 +583,7 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
             "/habit_builder.js": ("habit_builder.js", "application/javascript; charset=utf-8"),
             "/heartbeat_shell.css": ("heartbeat_shell.css", "text/css; charset=utf-8"),
             "/heartbeat_theme.css": ("heartbeat_theme.css", "text/css; charset=utf-8"),
+            "/heartbeat_theme.js": ("heartbeat_theme.js", "application/javascript; charset=utf-8"),
         }
         entry = static_pages.get(path)
         if entry is None:
@@ -785,8 +786,15 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
                 for p in parsed
             ]
             n = self._store().merge_tasks_from_assistant(touched, rows)
+            calendar_resync: dict[str, Any] | None = None
+            mgr = self._calendar()
+            if mgr is not None and touched:
+                calendar_resync = mgr.resync_plan_dates_to_calendar(touched)
             self._trigger_calendar_sync_async()
-            self._send_json(200, {"ok": True, "inserted": n, "dates": touched})
+            resp: dict[str, Any] = {"ok": True, "inserted": n, "dates": touched}
+            if calendar_resync is not None:
+                resp["calendar_resync"] = calendar_resync
+            self._send_json(200, resp)
             day_ui_flow_log(
                 uuid.uuid4().hex[:10],
                 f"SQLite merge from assistant: inserted_rows={n} dates={touched!r}",
@@ -896,8 +904,15 @@ class DaySchedulerUiHandler(BaseHTTPRequestHandler):
             for pd, lst in by_day.items():
                 self._store().replace_tasks_for_dates([pd], lst)
                 total += len(lst)
+            calendar_resync = None
+            mgr = self._calendar()
+            if mgr is not None and alldates:
+                calendar_resync = mgr.resync_plan_dates_to_calendar(alldates)
             self._trigger_calendar_sync_async()
-            self._send_json(200, {"ok": True, "saved": total, "dates": alldates})
+            upsert_resp: dict[str, Any] = {"ok": True, "saved": total, "dates": alldates}
+            if calendar_resync is not None:
+                upsert_resp["calendar_resync"] = calendar_resync
+            self._send_json(200, upsert_resp)
             day_ui_flow_log(
                 uuid.uuid4().hex[:10],
                 f"tasks upsert saved={total} plan_dates={alldates}",

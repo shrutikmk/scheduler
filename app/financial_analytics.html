@@ -4,22 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Heartbeat — Finances</title>
+  <script src="heartbeat_theme.js"></script>
   <script>
-    (function () {
-      try {
-        var saved = localStorage.getItem("scheduler-theme-mode") || "auto";
-        var theme;
-        if (saved === "light" || saved === "dark") {
-          theme = saved;
-        } else {
-          var h = new Date().getHours();
-          theme = h >= 7 && h < 19 ? "light" : "dark";
-        }
-        document.documentElement.dataset.theme = theme;
-      } catch (_) {
-        document.documentElement.dataset.theme = "light";
-      }
-    })();
+    HeartbeatTheme.paintDocumentTheme();
   </script>
   <link rel="stylesheet" href="heartbeat_theme.css" />
   <link rel="stylesheet" href="heartbeat_shell.css" />
@@ -755,11 +742,12 @@
         role="group"
         aria-label="Theme"
         id="fin-theme-toggle"
-        title="Auto follows local time (light by day, dark at night)"
+        title="Auto follows local time (morning, afternoon, night)"
       >
         <button type="button" data-theme-mode="auto">Auto</button>
-        <button type="button" data-theme-mode="light" aria-label="Light theme">☀</button>
-        <button type="button" data-theme-mode="dark" aria-label="Dark theme">☾</button>
+        <button type="button" data-theme-mode="light" aria-label="Morning theme">☀</button>
+        <button type="button" data-theme-mode="afternoon" aria-label="Afternoon theme">◑</button>
+        <button type="button" data-theme-mode="dark" aria-label="Night theme">☾</button>
       </div>
     </div>
   </header>
@@ -909,26 +897,11 @@
 
   <script>
 (function () {
-  const THEME_LS_KEY = "scheduler-theme-mode";
-  const DAY_START_HOUR = 7;
-  const DAY_END_HOUR = 19;
+  const HT = window.HeartbeatTheme;
   const themeToggleEl = document.getElementById("fin-theme-toggle");
 
-  function autoThemeNow() {
-    const h = new Date().getHours();
-    return h >= DAY_START_HOUR && h < DAY_END_HOUR ? "light" : "dark";
-  }
-
-  function readMode() {
-    try {
-      const raw = localStorage.getItem(THEME_LS_KEY);
-      if (raw === "light" || raw === "dark" || raw === "auto") return raw;
-    } catch (_) {}
-    return "auto";
-  }
-
   function applyTheme(theme) {
-    const t = theme === "dark" ? "dark" : "light";
+    const t = HT.normalizeTheme(theme);
     if (document.documentElement.dataset.theme !== t) {
       document.documentElement.dataset.theme = t;
     }
@@ -944,8 +917,8 @@
   }
 
   function resolveAndApply() {
-    const mode = readMode();
-    applyTheme(mode === "auto" ? autoThemeNow() : mode);
+    const mode = HT.readMode();
+    applyTheme(HT.resolveTheme(mode));
     refreshThemeToggleChrome(mode);
     if (typeof window.__finRefreshChartsForTheme === "function") {
       window.__finRefreshChartsForTheme();
@@ -960,7 +933,7 @@
       if (!btn) return;
       const mode = btn.getAttribute("data-theme-mode") || "auto";
       try {
-        localStorage.setItem(THEME_LS_KEY, mode);
+        localStorage.setItem(HT.LS_KEY, mode);
       } catch (_) {}
       resolveAndApply();
     });
@@ -1585,6 +1558,13 @@
       return finCssVar("--fin-chart-grid", "rgba(0, 0, 0, 0.08)");
     }
 
+    function finChartFillColor() {
+      const theme = document.documentElement.dataset.theme;
+      if (theme === "dark") return "rgba(122, 158, 196, 0.10)";
+      if (theme === "afternoon") return "rgba(193, 122, 10, 0.15)";
+      return "rgba(34, 136, 221, 0.12)";
+    }
+
     /** Cartesian axis skin for Chart.js (readable in light + dark). */
     function finThemedScale(tickExtra) {
       const tc = finChartTickColor();
@@ -1618,6 +1598,16 @@
         const leg = ch.options.plugins && ch.options.plugins.legend;
         if (leg && leg.labels) {
           leg.labels.color = tick;
+        }
+        if (ch.data && Array.isArray(ch.data.datasets)) {
+          ch.data.datasets.forEach((ds) => {
+            if (ds.borderColor != null) {
+              ds.borderColor = finCssVar("--accent", "#2288dd");
+            }
+            if (ds.backgroundColor != null && typeof ds.backgroundColor === "string" && ds.backgroundColor.startsWith("rgba(")) {
+              ds.backgroundColor = finChartFillColor();
+            }
+          });
         }
         ch.update("none");
       };
@@ -2135,10 +2125,8 @@
               label: balLineLabel,
               data: balValues,
               tension: 0.1,
-              borderColor: finCssVar("--accent", "#2563eb"),
-              backgroundColor: document.documentElement.dataset.theme === "dark"
-                ? "rgba(232, 182, 117, 0.12)"
-                : "rgba(37,99,235,0.15)"
+              borderColor: finCssVar("--accent", "#2288dd"),
+              backgroundColor: finChartFillColor()
             }]
           },
           options: {

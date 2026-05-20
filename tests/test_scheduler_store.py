@@ -85,3 +85,17 @@ def test_merge_preserves_gcal_id_on_same_key(store: SchedulerStore) -> None:
     assert len(rows) == 1
     assert rows[0]["duration_minutes"] == 90
     assert rows[0]["gcal_event_id"] == "evt-code"
+
+
+def test_reset_gcal_links_for_plan_dates(store: SchedulerStore) -> None:
+    store.replace_tasks_for_dates(
+        ["2026-05-09"],
+        [ScheduleRow("a", "2026-05-09", "8:00 AM", 60, "Coding", "pending")],
+    )
+    _attach(store, "a", "evt-1")
+    assert store.list_gcal_dirty_rows() == []
+    n = store.reset_gcal_links_for_plan_dates(["2026-05-09"])
+    assert n == 1
+    rows = store.list_schedule_tasks("2026-05-09")
+    assert rows[0]["gcal_event_id"] is None
+    assert len(store.list_gcal_dirty_rows()) == 1

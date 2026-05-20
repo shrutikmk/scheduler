@@ -4,165 +4,217 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Heartbeat — Scheduler</title>
+  <script src="heartbeat_theme.js"></script>
   <script>
-    // Paint the correct theme before first paint to avoid a flash. The full
-    // controller (in the body) handles persistence + auto-by-time updates.
-    (function () {
-      try {
-        var saved = localStorage.getItem("scheduler-theme-mode") || "auto";
-        var theme;
-        if (saved === "light" || saved === "dark") {
-          theme = saved;
-        } else {
-          var h = new Date().getHours();
-          theme = h >= 7 && h < 19 ? "light" : "dark";
-        }
-        document.documentElement.dataset.theme = theme;
-      } catch (_) {
-        document.documentElement.dataset.theme = "light";
-      }
-    })();
+    HeartbeatTheme.paintDocumentTheme();
   </script>
   <link rel="stylesheet" href="heartbeat_shell.css" />
   <style>
-    /* Light theme — warm linen/ivory palette, slate text. Easier on eyes than stark white + cool slate. */
+    /* Morning theme — sunny sky blue, fresh garden tones, soft floral accents. */
     :root {
       color-scheme: light;
-      --bg: #f6f3ec;
-      --panel: #fdfaf3;
-      --panel-translucent: rgba(253, 250, 243, 0.86);
-      --soft: #efeae0;
-      --border: #e3dccc;
-      --border-soft: #ece6d8;
-      --text: #2c2a25;
-      --muted: #74695a;
-      --accent: #3163a3;
-      --accent-soft: #dde6f1;
-      --accent-strong: #244c80;
+      --bg: #f0f7fd;
+      --panel: #fafcff;
+      --panel-translucent: rgba(250, 252, 255, 0.88);
+      --soft: #e6f2fb;
+      --border: #c5dcef;
+      --border-soft: #dceaf7;
+      --text: #1e3348;
+      --muted: #5a7288;
+      --accent: #2288dd;
+      --accent-soft: #d6ebfa;
+      --accent-strong: #1a6bb8;
       --on-accent: #ffffff;
-      --bg-spot: rgba(49, 99, 163, 0.07);
-      --shadow: 0 18px 45px rgba(75, 60, 40, 0.10);
-      --shadow-soft: 0 8px 24px rgba(75, 60, 40, 0.07);
-      --chat-bg-from: rgba(253, 250, 243, 0.62);
-      --chat-bg-to: rgba(246, 243, 236, 0.92);
-      --chat-surface: rgba(253, 250, 243, 0.72);
-      --user-msg-from: #e6edf7;
-      --user-msg-to: #f1f4f9;
-      --user-msg-border: #c7d4e8;
-      --assist-msg-bg: #fdfaf3;
-      --action-btn-bg: rgba(253, 250, 243, 0.85);
-      --action-btn-border: #d3ccbb;
-      --action-btn-color: #4a4538;
-      --action-btn-hover: #efeae0;
-      --thinking-bg: #efeae0;
-      --thinking-border: #ddd4c2;
-      --thinking-color: #5d564a;
-      --thinking-label: #8b8270;
-      --input-bg: #fffdf6;
-      --input-border: #ccc3ae;
-      --input-focus-border: #8aa9d4;
-      --input-focus-ring: rgba(49, 99, 163, 0.18);
-      --pill-online-bg: #dfeed4;
-      --pill-online-border: #a5c98a;
-      --pill-online-color: #3a5618;
-      --pill-offline-bg: #f4d8cc;
-      --pill-offline-border: #d99a82;
-      --pill-offline-color: #8b3814;
-      --pill-default-border: #d3ccbb;
-      --warn-bg: #fceadf;
-      --warn-bg-hover: #f5d8c5;
-      --warn-border: #e8b8a4;
-      --warn-border-hover: #d99a82;
-      --warn-text: #9b3d1e;
-      --success-bg: #e0efd4;
-      --success-bg-hover: #cee3bc;
-      --success-border: #b9d394;
-      --success-text: #3d5a16;
-      --task-card-bg: rgba(253, 250, 243, 0.95);
+      --bg-spot: rgba(34, 136, 221, 0.11);
+      --shadow: 0 18px 45px rgba(30, 70, 120, 0.08);
+      --shadow-soft: 0 8px 24px rgba(30, 70, 120, 0.05);
+      --chat-bg-from: rgba(250, 252, 255, 0.65);
+      --chat-bg-to: rgba(236, 244, 252, 0.92);
+      --chat-surface: rgba(250, 252, 255, 0.75);
+      --user-msg-from: #e0eef9;
+      --user-msg-to: #ebe6f6;
+      --user-msg-border: #b8d4ef;
+      --assist-msg-bg: #fafcff;
+      --action-btn-bg: rgba(250, 252, 255, 0.88);
+      --action-btn-border: #c5dcef;
+      --action-btn-color: #2a4560;
+      --action-btn-hover: #e6f2fb;
+      --thinking-bg: #edf2fa;
+      --thinking-border: #cddff0;
+      --thinking-color: #4a6580;
+      --thinking-label: #6a8498;
+      --input-bg: #ffffff;
+      --input-border: #b8cfe4;
+      --input-focus-border: #5aa8e8;
+      --input-focus-ring: rgba(34, 136, 221, 0.18);
+      --pill-online-bg: #dcf5e4;
+      --pill-online-border: #8ecba0;
+      --pill-online-color: #1f5632;
+      --pill-offline-bg: #fce8ec;
+      --pill-offline-border: #e8a8b4;
+      --pill-offline-color: #8b3048;
+      --pill-default-border: #c5dcef;
+      --warn-bg: #fdf0e8;
+      --warn-bg-hover: #f5e0d0;
+      --warn-border: #e8c4a8;
+      --warn-border-hover: #d8a888;
+      --warn-text: #8b5030;
+      --success-bg: #dcf5e8;
+      --success-bg-hover: #c8ecd4;
+      --success-border: #8ecba8;
+      --success-text: #1f5632;
+      --task-card-bg: rgba(250, 252, 255, 0.95);
       --task-card-pending-bar: var(--accent);
-      --task-card-done-bar: #5a8233;
-      --task-card-cancel-bar: #a39a86;
-      --button-bg: #f1ede2;
-      --button-border: #d3ccbb;
-      --button-hover-bg: #e2dccc;
-      --button-text: #3a342a;
-      --empty-border: #cdc4b0;
-      --status-text: #74695a;
-      --nav-link-bg: rgba(253, 250, 243, 0.55);
-      --nav-link-hover-bg: #efeae0;
+      --task-card-done-bar: #3d9960;
+      --task-card-cancel-bar: #8a9eb0;
+      --button-bg: #e6f2fb;
+      --button-border: #c5dcef;
+      --button-hover-bg: #d6ebfa;
+      --button-text: #1e3348;
+      --empty-border: #b8cfe4;
+      --status-text: #5a7288;
+      --nav-link-bg: rgba(250, 252, 255, 0.60);
+      --nav-link-hover-bg: #e6f2fb;
       --nav-tab-active-bg: var(--accent-soft);
       --nav-tab-active-border: var(--accent-strong);
-      --button-text: #3a342a;
     }
 
-    /* Dark theme — warm near-black + amber accent. Avoids pure black/white halation, less melatonin disruption at night. */
-    :root[data-theme="dark"] {
-      color-scheme: dark;
-      --bg: #1a1d24;
-      --panel: #23272f;
-      --panel-translucent: rgba(35, 39, 47, 0.80);
-      --soft: #2c313b;
-      --border: #3a4150;
-      --border-soft: #2f3540;
-      --text: #dde2eb;
-      --muted: #94a0b3;
-      --accent: #e8b675;
-      --accent-soft: #3a2c19;
-      --accent-strong: #d49b51;
-      --on-accent: #1a1208;
-      --bg-spot: rgba(232, 182, 117, 0.08);
-      --shadow: 0 18px 45px rgba(0, 0, 0, 0.55);
-      --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.38);
-      --chat-bg-from: rgba(35, 39, 47, 0.55);
-      --chat-bg-to: rgba(26, 29, 36, 0.92);
-      --chat-surface: rgba(35, 39, 47, 0.72);
-      --user-msg-from: #2b3142;
-      --user-msg-to: #232838;
-      --user-msg-border: #3d4659;
-      --assist-msg-bg: #262a33;
-      --action-btn-bg: rgba(50, 56, 67, 0.85);
-      --action-btn-border: #424a5a;
-      --action-btn-color: #c5cdda;
-      --action-btn-hover: #353c48;
-      --thinking-bg: #1f242d;
-      --thinking-border: #353c48;
-      --thinking-color: #95a0b3;
-      --thinking-label: #6a7488;
-      --input-bg: #1d2129;
-      --input-border: #3a4150;
-      --input-focus-border: #c79a5e;
-      --input-focus-ring: rgba(232, 182, 117, 0.22);
-      --pill-online-bg: #1f3a26;
-      --pill-online-border: #3e6f4a;
-      --pill-online-color: #b3dab4;
-      --pill-offline-bg: #3a201a;
-      --pill-offline-border: #7a3d2e;
-      --pill-offline-color: #f1b8a0;
-      --pill-default-border: #3a4150;
-      --warn-bg: #3a2018;
-      --warn-bg-hover: #4a2820;
-      --warn-border: #7a3d2e;
-      --warn-border-hover: #9b5238;
-      --warn-text: #f0a98a;
-      --success-bg: #1f3a1f;
-      --success-bg-hover: #2a4a2a;
-      --success-border: #3e6f3e;
-      --success-text: #a8d99c;
-      --task-card-bg: rgba(35, 39, 47, 0.95);
+    /* Afternoon theme — golden-hour warmth: honey cream, amber accent, espresso text. */
+    :root[data-theme="afternoon"] {
+      color-scheme: light;
+      --bg: #f9f0dc;
+      --panel: #fdf8eb;
+      --panel-translucent: rgba(253, 248, 235, 0.88);
+      --soft: #f3e8cc;
+      --border: #e8d4a8;
+      --border-soft: #efe2c4;
+      --text: #3d2e1a;
+      --muted: #8a7347;
+      --accent: #c17a0a;
+      --accent-soft: #f5e4c4;
+      --accent-strong: #9a5f06;
+      --on-accent: #fffdf8;
+      --bg-spot: rgba(193, 122, 10, 0.12);
+      --shadow: 0 18px 45px rgba(120, 85, 30, 0.12);
+      --shadow-soft: 0 8px 24px rgba(120, 85, 30, 0.08);
+      --chat-bg-from: rgba(253, 248, 235, 0.62);
+      --chat-bg-to: rgba(249, 240, 220, 0.92);
+      --chat-surface: rgba(253, 248, 235, 0.72);
+      --user-msg-from: #f8ead0;
+      --user-msg-to: #fdf3e0;
+      --user-msg-border: #e0c88a;
+      --assist-msg-bg: #fdf8eb;
+      --action-btn-bg: rgba(253, 248, 235, 0.85);
+      --action-btn-border: #dcc99a;
+      --action-btn-color: #4a3818;
+      --action-btn-hover: #f3e8cc;
+      --thinking-bg: #f3e8cc;
+      --thinking-border: #e0d0a8;
+      --thinking-color: #6b5630;
+      --thinking-label: #9a8450;
+      --input-bg: #fff9ed;
+      --input-border: #dcc99a;
+      --input-focus-border: #c9953a;
+      --input-focus-ring: rgba(193, 122, 10, 0.20);
+      --pill-online-bg: #e4f0d4;
+      --pill-online-border: #a5c98a;
+      --pill-online-color: #3a5618;
+      --pill-offline-bg: #f5dcc8;
+      --pill-offline-border: #d99a82;
+      --pill-offline-color: #8b3814;
+      --pill-default-border: #dcc99a;
+      --warn-bg: #fce8d0;
+      --warn-bg-hover: #f5d8b0;
+      --warn-border: #e8b878;
+      --warn-border-hover: #d99a50;
+      --warn-text: #9b5a0e;
+      --success-bg: #e4efd0;
+      --success-bg-hover: #d4e3b8;
+      --success-border: #b9c878;
+      --success-text: #4a5a16;
+      --task-card-bg: rgba(253, 248, 235, 0.95);
       --task-card-pending-bar: var(--accent);
-      --task-card-done-bar: #6fa75e;
-      --task-card-cancel-bar: #5a6172;
-      --button-bg: #2c313b;
-      --button-border: #3a4150;
-      --button-hover-bg: #353c48;
-      --button-text: #c5cdda;
-      --empty-border: #3a4150;
-      --status-text: #94a0b3;
-      --nav-link-bg: rgba(44, 49, 59, 0.55);
-      --nav-link-hover-bg: #353c48;
+      --task-card-done-bar: #6a8233;
+      --task-card-cancel-bar: #b0a080;
+      --button-bg: #f3e8cc;
+      --button-border: #dcc99a;
+      --button-hover-bg: #e8d9b0;
+      --button-text: #4a3818;
+      --empty-border: #d4c090;
+      --status-text: #8a7347;
+      --nav-link-bg: rgba(253, 248, 235, 0.55);
+      --nav-link-hover-bg: #f3e8cc;
       --nav-tab-active-bg: var(--accent-soft);
       --nav-tab-active-border: var(--accent-strong);
-      --button-text: #c5cdda;
+    }
+
+    /* Night theme — calm moonlit blues, low contrast, easy on the eyes at night. */
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #131820;
+      --panel: #1a2030;
+      --panel-translucent: rgba(26, 32, 48, 0.82);
+      --soft: #1e2636;
+      --border: #2a3448;
+      --border-soft: #222a3a;
+      --text: #b0bac8;
+      --muted: #6e7a8c;
+      --accent: #7a9ec4;
+      --accent-soft: #1e2a3c;
+      --accent-strong: #8eb0d0;
+      --on-accent: #0e141c;
+      --bg-spot: rgba(122, 158, 196, 0.05);
+      --shadow: 0 18px 45px rgba(0, 0, 0, 0.40);
+      --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.28);
+      --chat-bg-from: rgba(26, 32, 48, 0.55);
+      --chat-bg-to: rgba(19, 24, 32, 0.92);
+      --chat-surface: rgba(26, 32, 48, 0.72);
+      --user-msg-from: #1e2638;
+      --user-msg-to: #1a2230;
+      --user-msg-border: #2e3a50;
+      --assist-msg-bg: #1c2434;
+      --action-btn-bg: rgba(30, 38, 54, 0.85);
+      --action-btn-border: #2e3a50;
+      --action-btn-color: #98a4b4;
+      --action-btn-hover: #242e42;
+      --thinking-bg: #181e2c;
+      --thinking-border: #2a3448;
+      --thinking-color: #788898;
+      --thinking-label: #586878;
+      --input-bg: #161c28;
+      --input-border: #2a3448;
+      --input-focus-border: #6a8eb0;
+      --input-focus-ring: rgba(122, 158, 196, 0.16);
+      --pill-online-bg: #1a2e24;
+      --pill-online-border: #2e5840;
+      --pill-online-color: #88b898;
+      --pill-offline-bg: #2a2024;
+      --pill-offline-border: #584040;
+      --pill-offline-color: #c09898;
+      --pill-default-border: #2a3448;
+      --warn-bg: #2a2220;
+      --warn-bg-hover: #342a28;
+      --warn-border: #584038;
+      --warn-border-hover: #685048;
+      --warn-text: #c09888;
+      --success-bg: #1a2a22;
+      --success-bg-hover: #223428;
+      --success-border: #2e5840;
+      --success-text: #88b898;
+      --task-card-bg: rgba(26, 32, 48, 0.95);
+      --task-card-pending-bar: var(--accent);
+      --task-card-done-bar: #588868;
+      --task-card-cancel-bar: #485868;
+      --button-bg: #1e2636;
+      --button-border: #2a3448;
+      --button-hover-bg: #242e42;
+      --button-text: #a8b4c4;
+      --empty-border: #2a3448;
+      --status-text: #6e7a8c;
+      --nav-link-bg: rgba(30, 38, 54, 0.55);
+      --nav-link-hover-bg: #242e42;
+      --nav-tab-active-bg: var(--accent-soft);
+      --nav-tab-active-border: var(--accent-strong);
     }
 
     * { box-sizing: border-box; }
@@ -180,6 +232,7 @@
     .grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-rows: auto 1fr;
       height: 100%;
       max-height: 100vh;
       max-height: 100dvh;
@@ -191,10 +244,23 @@
       display: flex;
       flex-direction: column;
     }
+    @supports (grid-template-rows: subgrid) {
+      .col {
+        display: grid;
+        grid-template-rows: subgrid;
+        grid-row: span 2;
+      }
+      .col-header {
+        min-height: 0;
+      }
+    }
     .col:last-child { border-right: none; }
     .col-header {
       flex: 0 0 auto;
-      min-height: 4.35rem;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+      min-height: 6.35rem;
       padding: 0.7rem 0.9rem;
       font-weight: 600;
       font-size: 0.95rem;
@@ -205,10 +271,11 @@
     }
     .header-shell {
       display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 0.75rem;
-      height: 100%;
+      flex: 1 1 auto;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.55rem;
+      min-height: 0;
     }
     .header-title {
       display: flex;
@@ -234,6 +301,33 @@
       flex-wrap: wrap;
       gap: 0.38rem;
       min-width: 0;
+    }
+    .header-shell-planner .header-toolbar {
+      margin-top: auto;
+      flex-shrink: 0;
+    }
+    .header-shell:not(.header-shell-planner)::after {
+      content: "";
+      display: block;
+      flex: 1 1 auto;
+      margin-top: auto;
+      min-height: 1.89rem;
+    }
+    .header-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      width: 100%;
+      min-width: 0;
+    }
+    .header-toolbar .date-nav {
+      flex: 0 1 auto;
+      min-width: 0;
+    }
+    .header-toolbar .btn-clear-day {
+      flex: 0 0 auto;
+      margin-left: auto;
     }
     .sync-btn {
       cursor: pointer;
@@ -325,8 +419,10 @@
       .grid {
         grid-template-columns: 0.95fr 1.05fr 1fr;
       }
+      .col-header {
+        min-height: 6.75rem;
+      }
       .header-shell {
-        flex-direction: column;
         gap: 0.45rem;
       }
       .header-actions {
@@ -425,28 +521,6 @@
       background: var(--success-bg-hover);
     }
     .task-complete-btn:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
-    .task-add-btn {
-      width: 1.65rem;
-      height: 1.65rem;
-      display: inline-grid;
-      place-items: center;
-      padding: 0;
-      color: var(--accent-strong);
-      background: var(--accent-soft);
-      border: 1px solid var(--accent-strong);
-      border-radius: 999px;
-      font-size: 1.05rem;
-      font-weight: 700;
-      line-height: 1;
-      cursor: pointer;
-    }
-    .task-add-btn:hover {
-      filter: brightness(1.06);
-    }
-    .task-add-btn:disabled {
       opacity: 0.55;
       cursor: not-allowed;
     }
@@ -587,10 +661,10 @@
       font-size: 0.86em;
       padding: 0.08rem 0.28rem;
       border-radius: 6px;
-      background: rgba(116, 105, 90, 0.12);
+      background: rgba(34, 100, 160, 0.10);
     }
     :root[data-theme="dark"] .msg-markdown code {
-      background: rgba(148, 160, 179, 0.18);
+      background: rgba(110, 122, 140, 0.16);
     }
     .msg-markdown pre code {
       display: block;
@@ -615,7 +689,7 @@
       vertical-align: top;
     }
     .msg-markdown th {
-      background: rgba(116, 105, 90, 0.08);
+      background: rgba(34, 100, 160, 0.06);
     }
     .msg-thinking {
       color: var(--thinking-color);
@@ -679,12 +753,12 @@
       height: 0.48rem;
       border-radius: 999px;
       background: var(--accent);
-      box-shadow: 0 0 0 0 rgba(49, 99, 163, 0.35);
+      box-shadow: 0 0 0 0 rgba(34, 136, 221, 0.35);
       animation: pulse-dot 1.4s ease-in-out infinite;
       flex: 0 0 auto;
     }
     :root[data-theme="dark"] .msg-status::before {
-      box-shadow: 0 0 0 0 rgba(232, 182, 117, 0.32);
+      box-shadow: 0 0 0 0 rgba(122, 158, 196, 0.28);
     }
     @keyframes pulse-dot {
       0% { transform: scale(0.9); opacity: 0.55; }
@@ -742,13 +816,7 @@
       display: flex;
       gap: 0.35rem;
       align-items: center;
-      justify-content: space-between;
-    }
-    .compose-hint {
-      color: var(--muted);
-      font-size: 0.76rem;
-      line-height: 1.2;
-      padding-left: 0.15rem;
+      justify-content: flex-end;
     }
     .compose-actions {
       display: flex;
@@ -919,27 +987,6 @@
       text-transform: uppercase;
       letter-spacing: 0.03em;
     }
-    #habits-from-builder-list {
-      list-style: none;
-      padding: 0;
-      margin: 0 0 0.75rem;
-      border-bottom: 1px solid var(--border-soft);
-      padding-bottom: 0.65rem;
-    }
-    #habits-from-builder-list li {
-      padding: 0.25rem 0;
-      font-size: 0.88rem;
-    }
-    #habits-from-builder-list li .hb-title { font-weight: 500; }
-    #habits-from-builder-list li .hb-meta {
-      font-size: 0.78rem;
-      color: var(--muted);
-    }
-    #habits-builder-hint {
-      font-size: 0.82rem;
-      color: var(--muted);
-      margin-bottom: 0.5rem;
-    }
     .muted { color: var(--muted); }
   </style>
 </head>
@@ -959,8 +1006,67 @@
         <a href="/" class="site-nav-tab" aria-current="page">Scheduler</a>
         <a href="/finances" class="site-nav-tab">Finances</a>
       </nav>
+      <button
+        type="button"
+        id="app-menu-open"
+        class="app-menu-trigger"
+        aria-label="Open settings menu"
+        aria-expanded="false"
+        aria-controls="app-settings-panel"
+      >
+        <svg class="app-menu-icon" viewBox="0 0 18 12" aria-hidden="true">
+          <line x1="2" y1="1.5" x2="16" y2="1.5" />
+          <line x1="2" y1="6" x2="16" y2="6" />
+          <line x1="2" y1="10.5" x2="16" y2="10.5" />
+        </svg>
+      </button>
     </div>
   </header>
+  <div
+    id="app-settings-backdrop"
+    class="app-settings-backdrop"
+    aria-hidden="true"
+    hidden
+  ></div>
+  <aside
+    id="app-settings-panel"
+    class="app-settings-panel"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Settings"
+    aria-hidden="true"
+  >
+    <div class="app-settings-panel-head">
+      <span class="app-settings-panel-title">Settings</span>
+      <button type="button" id="app-menu-close" class="app-settings-close" aria-label="Close settings menu">×</button>
+    </div>
+    <div class="app-settings-panel-body">
+      <div class="app-settings-section">
+        <span class="app-settings-label">Theme</span>
+        <div
+          class="theme-toggle"
+          role="group"
+          aria-label="Theme"
+          id="theme-toggle"
+          title="Auto follows local time (morning, afternoon, night)"
+        >
+          <button type="button" data-theme-mode="auto">Auto</button>
+          <button type="button" data-theme-mode="light" aria-label="Morning theme">☀</button>
+          <button type="button" data-theme-mode="afternoon" aria-label="Afternoon theme">◑</button>
+          <button type="button" data-theme-mode="dark" aria-label="Night theme">☾</button>
+        </div>
+      </div>
+      <div class="app-settings-section">
+        <span class="app-settings-label">LLM API</span>
+        <span class="llm-pill muted" id="llm-status-pill" title="scheduler_llm_gateway.py">LLM …</span>
+      </div>
+      <div class="app-settings-section">
+        <span class="app-settings-label">Google Calendar</span>
+        <span class="llm-pill muted" id="gcal-status-pill" title="Google Calendar sync">GCal …</span>
+        <button type="button" id="gcal-action-btn" class="llm-pill sync-btn" hidden>Sync now</button>
+      </div>
+    </div>
+  </aside>
   <div class="grid">
     <section class="col">
       <div class="col-header">
@@ -982,12 +1088,12 @@
 
     <section class="col">
       <div class="col-header">
-        <div class="header-shell">
+        <div class="header-shell header-shell-planner">
           <div class="header-title">
             <strong>Planner</strong>
-            <span class="header-kicker">Saved and suggested tasks</span>
+            <span class="header-kicker">Saved tasks for the day</span>
           </div>
-          <div class="header-actions">
+          <div class="header-toolbar">
             <div class="date-nav" role="group" aria-label="Planner date">
               <input type="date" id="focus-date-input" class="date-nav-hidden-date" tabindex="-1" aria-hidden="true" />
               <button type="button" id="btn-prev-day" class="date-nav-arrow" title="Previous day" aria-label="Previous day">←</button>
@@ -1009,14 +1115,10 @@
       </div>
       <div class="col-body" id="agenda-body">
         <div class="date-line" id="today-label"></div>
-        <div class="subhead">Habit Builder</div>
-        <p class="muted" id="habits-builder-hint" hidden></p>
-        <ul id="habits-from-builder-list"></ul>
+        <div class="subhead" id="agenda-habits-subhead" hidden>Habits due today</div>
+        <div class="planner-card-list" id="agenda-habits-list" hidden></div>
         <div class="subhead">Saved plan</div>
         <div class="planner-card-list" id="agenda-db-list"></div>
-        <div class="subhead">Latest suggested plan</div>
-        <div class="planner-card-list" id="agenda-list"></div>
-        <div class="empty-card" id="agenda-fallback-pre" hidden></div>
       </div>
     </section>
 
@@ -1026,22 +1128,6 @@
           <div class="header-title">
             <strong>Chat</strong>
             <span class="header-kicker">AI schedule assistant</span>
-          </div>
-          <div class="header-actions">
-            <div
-              class="theme-toggle"
-              role="group"
-              aria-label="Theme"
-              id="theme-toggle"
-              title="Auto follows local time (light by day, dark at night)"
-            >
-              <button type="button" data-theme-mode="auto">Auto</button>
-              <button type="button" data-theme-mode="light" aria-label="Light theme">☀</button>
-              <button type="button" data-theme-mode="dark" aria-label="Dark theme">☾</button>
-            </div>
-            <span class="llm-pill muted" id="llm-status-pill" title="scheduler_llm_gateway.py">LLM …</span>
-            <span class="llm-pill muted" id="gcal-status-pill" title="Google Calendar sync">GCal …</span>
-            <button type="button" id="gcal-action-btn" class="llm-pill sync-btn" hidden></button>
           </div>
         </div>
       </div>
@@ -1055,7 +1141,6 @@
           <div class="compose-box">
             <textarea id="prompt" placeholder="Message your day planner…"></textarea>
             <div class="chat-row">
-              <span class="compose-hint">Enter sends · Shift+Enter adds a line · queue follow-ups while a reply streams · Send (empty) retries after an error</span>
               <span class="compose-actions">
                 <button type="button" id="clear-thread">Clear</button>
                 <button type="button" id="send" class="primary">Send</button>
@@ -1073,35 +1158,19 @@
   <script>
 (function () {
   // ---------------------------------------------------------------------------
-  // Theme controller — light by day, dark at night, with manual override.
-  // Mode is stored in localStorage as "auto" | "light" | "dark". The early head
-  // script already painted a best-effort theme; here we wire the toggle UI,
-  // re-evaluate on a 60-second tick, and broadcast the resolved theme to the
-  // habit-builder iframe via postMessage so both panes stay consistent.
+  // Theme controller — morning / afternoon / night, with manual override.
+  // Mode is stored in localStorage as "auto" | "light" | "afternoon" | "dark".
+  // The early head script already painted a best-effort theme; here we wire the
+  // toggle UI, re-evaluate on a 60-second tick, and broadcast the resolved
+  // theme to the habit-builder iframe via postMessage.
   // ---------------------------------------------------------------------------
-  const THEME_LS_KEY = "scheduler-theme-mode";
-  const DAY_START_HOUR = 7; // 07:00 local — light theme begins
-  const DAY_END_HOUR = 19; // 19:00 local — dark theme begins
+  const HT = window.HeartbeatTheme;
   const themeToggleEl = document.getElementById("theme-toggle");
   const habitsFrameElEarly = document.getElementById("habits-frame");
 
-  /** @returns {"light" | "dark"} */
-  function autoThemeNow() {
-    const h = new Date().getHours();
-    return h >= DAY_START_HOUR && h < DAY_END_HOUR ? "light" : "dark";
-  }
-
-  function readMode() {
-    try {
-      const raw = localStorage.getItem(THEME_LS_KEY);
-      if (raw === "light" || raw === "dark" || raw === "auto") return raw;
-    } catch (_) {}
-    return "auto";
-  }
-
-  /** Apply ``theme`` to <html> and notify the iframe. */
+  /** Apply resolved theme to <html> and notify the iframe. */
   function applyTheme(theme) {
-    const t = theme === "dark" ? "dark" : "light";
+    const t = HT.normalizeTheme(theme);
     if (document.documentElement.dataset.theme !== t) {
       document.documentElement.dataset.theme = t;
     }
@@ -1117,8 +1186,8 @@
   }
 
   function resolveAndApply() {
-    const mode = readMode();
-    applyTheme(mode === "auto" ? autoThemeNow() : mode);
+    const mode = HT.readMode();
+    applyTheme(HT.resolveTheme(mode));
     refreshThemeToggleChrome(mode);
   }
 
@@ -1140,7 +1209,7 @@
       if (!btn) return;
       const mode = btn.getAttribute("data-theme-mode") || "auto";
       try {
-        localStorage.setItem(THEME_LS_KEY, mode);
+        localStorage.setItem(HT.LS_KEY, mode);
       } catch (_) {}
       resolveAndApply();
     });
@@ -1150,6 +1219,55 @@
   setInterval(resolveAndApply, 60_000);
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden) resolveAndApply();
+  });
+
+  const appMenuOpenBtn = document.getElementById("app-menu-open");
+  const appMenuCloseBtn = document.getElementById("app-menu-close");
+  const appSettingsPanel = document.getElementById("app-settings-panel");
+  const appSettingsBackdrop = document.getElementById("app-settings-backdrop");
+  let appSettingsOpen = false;
+
+  function setAppSettingsOpen(open) {
+    appSettingsOpen = !!open;
+    if (appSettingsPanel) {
+      appSettingsPanel.classList.toggle("open", appSettingsOpen);
+      appSettingsPanel.setAttribute("aria-hidden", appSettingsOpen ? "false" : "true");
+    }
+    if (appMenuOpenBtn) {
+      appMenuOpenBtn.setAttribute("aria-expanded", appSettingsOpen ? "true" : "false");
+    }
+    if (appSettingsBackdrop) {
+      appSettingsBackdrop.hidden = !appSettingsOpen;
+      appSettingsBackdrop.setAttribute("aria-hidden", appSettingsOpen ? "false" : "true");
+      appSettingsBackdrop.classList.toggle("visible", appSettingsOpen);
+    }
+    document.body.classList.toggle("app-settings-open", appSettingsOpen);
+    if (appSettingsOpen && appMenuCloseBtn) {
+      appMenuCloseBtn.focus();
+    } else if (!appSettingsOpen && appMenuOpenBtn) {
+      appMenuOpenBtn.focus();
+    }
+  }
+
+  if (appMenuOpenBtn && appSettingsPanel) {
+    appMenuOpenBtn.addEventListener("click", function () {
+      setAppSettingsOpen(true);
+    });
+  }
+  if (appMenuCloseBtn) {
+    appMenuCloseBtn.addEventListener("click", function () {
+      setAppSettingsOpen(false);
+    });
+  }
+  if (appSettingsBackdrop) {
+    appSettingsBackdrop.addEventListener("click", function () {
+      setAppSettingsOpen(false);
+    });
+  }
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && appSettingsOpen) {
+      setAppSettingsOpen(false);
+    }
   });
 
   const chatScroll = document.getElementById("chat-scroll");
@@ -1166,10 +1284,6 @@
     return el;
   }
 
-  const agendaList = document.getElementById("agenda-list");
-  const agendaFallback = document.getElementById("agenda-fallback-pre");
-  const habitsUl = document.getElementById("habits-from-builder-list");
-  const habitsHint = document.getElementById("habits-builder-hint");
   const todayLabel = document.getElementById("today-label");
   const promptEl = document.getElementById("prompt");
   const sendBtn = document.getElementById("send");
@@ -1177,6 +1291,8 @@
   const statusEl = document.getElementById("chat-status");
   const queuePanelEl = document.getElementById("chat-queue");
   const llmPill = document.getElementById("llm-status-pill");
+  const agendaHabitsSubhead = document.getElementById("agenda-habits-subhead");
+  const agendaHabitsList = document.getElementById("agenda-habits-list");
   const agendaDbList = document.getElementById("agenda-db-list");
   const btnPrevDay = document.getElementById("btn-prev-day");
   const btnNextDay = document.getElementById("btn-next-day");
@@ -1807,73 +1923,13 @@
   /** @type {{ id: string, title: string, start: string, days: Record<string, boolean> }[]} */
   let latestHabits = [];
 
-  /** @type {{ title: string, duration_minutes: number, reason: string, target_date: string }[]} */
-  let latestRequiredPlannerHabits = [];
-
-  /** Rows from the last completed GET /api/tasks load for planner duplicate checks. */
+  /** Rows from the last completed GET /api/tasks load for the saved plan list. */
   let latestSavedPlanTasks = [];
 
-  const SCHED_LINE =
-    /^\*\s+(?:\[(\d{4}-\d{2}-\d{2})\]\s+)?\[([^\]]+)\]\s*-\s*(.+?)\s*-\s*(\d+h\d+m)\s*$/;
+  /** @type {{ habit_id: string, title: string, duration_minutes: number, target_date: string, logged: boolean, reason: string }[]} */
+  let latestMandatoryHabits = [];
 
-  const MD_PROBE_CORE =
-    /^(?:\[(\d{4}-\d{2}-\d{2})\]\s+)?\[([^\]]+)\]\s*(?:-|—|\u2014|\u2013)\s*(.+?)\s*(?:-|—|\u2014|\u2013)\s*(\d+h\d+m)\s*$/;
-  /** Markdown / loose empty-plan bullets the server normalizes similarly. */
-  const MD_EMPTY_ANY_RE =
-    /^\s*(?:\*\s+|[-+*]\s+|\d+[.)]\s+)?\(empty\s+[\u2014\u2013-]\s+nothing\s+left\s+on\s+today's\s+plan\.?\)\s*$/i;
-
-  function stripMarkdownListPrefixes(js) {
-    let t = String(js || "").replace(/^\ufeff/, "").trimStart();
-    for (;;) {
-      const mm = /^([-*+]\s+|\d+[.)]\s+)/.exec(t);
-      if (!mm) break;
-      t = t.slice(mm[0].length).trimStart();
-      if (t.startsWith("*") && !t.startsWith("**")) {
-        t = t.slice(1).trimStart();
-      }
-    }
-    return t.trim();
-  }
-
-  function consumeLineStartMdStars(s) {
-    let t = String(s || "").trim();
-    for (;;) {
-      if (t.startsWith("**")) {
-        t = t.slice(2).trimStart();
-      } else if (t.length > 1 && t.startsWith("*") && (/[\[(]/).test(t[1])) {
-        t = t.slice(1).trimStart();
-      } else break;
-    }
-    return t;
-  }
-
-  function markdownishLineToStrictStar(raw) {
-    const ls = String(raw || "").trim();
-    if (!ls || /^[>|]/.test(ls) || /^#+\s/.test(ls) || ls.startsWith("```")) return null;
-    if (MD_EMPTY_ANY_RE.test(ls)) {
-      return "* (empty — nothing left on today's plan.)";
-    }
-    const stripped = consumeLineStartMdStars(stripMarkdownListPrefixes(ls));
-    const core = stripped.replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
-    const md = MD_PROBE_CORE.exec(core);
-    if (!md) return null;
-    const dIso = md[1];
-    const timeLab = String(md[2] || "").trim();
-    const title = String(md[3] || "").trim();
-    const dur = String(md[4] || "").trim();
-    return dIso
-      ? "* [" + dIso + "] [" + timeLab + "] - " + title + " - " + dur
-      : "* [" + timeLab + "] - " + title + " - " + dur;
-  }
-
-  function plannerLineNormalizedForTasks(line) {
-    let ls = String(line || "").trim();
-    if (!ls.startsWith("*")) {
-      const canon = markdownishLineToStrictStar(ls);
-      if (canon) ls = canon;
-    }
-    return ls;
-  }
+  let habitLogInFlight = false;
 
   function renderAssistantMarkdown(assistantMarkdown) {
     const src = displayTextForMessage("assistant", assistantMarkdown);
@@ -1958,9 +2014,6 @@
   /** Gateway ``import_default_plan_date`` for SQLite/GCal import of undated bullets. */
   /** @type {string} */
   let lastImportDefaultPlanDateIso = "";
-
-  /** @type {string} */
-  let lastLlmPreview = "";
 
   function pad2(n) {
     return String(n).padStart(2, "0");
@@ -2054,8 +2107,6 @@
     clearPendingChatQueue();
     chatHistory = [];
     clearChatTranscript();
-    lastLlmPreview = "";
-    refreshLlmSchedule("");
     refreshComposeStatus();
     void reloadDbAgenda();
     if (typeof msgStatus === "string") statusEl.textContent = msgStatus;
@@ -2111,19 +2162,6 @@
     };
   }
 
-  function parseAnchorIsoForSuggestions() {
-    if (
-      lastImportDefaultPlanDateIso &&
-      /^\d{4}-\d{2}-\d{2}$/.test(lastImportDefaultPlanDateIso)
-    ) {
-      return lastImportDefaultPlanDateIso;
-    }
-    if (focusDateIso && /^\d{4}-\d{2}-\d{2}$/.test(focusDateIso)) {
-      return focusDateIso;
-    }
-    return lastAssistClientDateIso;
-  }
-
   async function syncCalendarBeforeChat() {
     if (!gcalBtn || gcalBtn.dataset.action !== "sync" || gcalBtn.disabled) {
       return;
@@ -2161,7 +2199,6 @@
         if (focusDateIso === requestedDate) {
           latestSavedPlanTasks = [];
           renderTaskCards(agendaDbList, [], "Saved plan unavailable.");
-          refreshLlmSchedule(lastLlmPreview);
         }
         return;
       }
@@ -2175,12 +2212,10 @@
       renderTaskCards(agendaDbList, tasks, "No saved tasks for this day yet.", {
         allowComplete: true,
       });
-      refreshLlmSchedule(lastLlmPreview);
     } catch (_) {
       if (focusDateIso === requestedDate) {
         latestSavedPlanTasks = [];
         renderTaskCards(agendaDbList, [], "Saved plan unavailable.");
-        refreshLlmSchedule(lastLlmPreview);
       }
     }
   }
@@ -2250,28 +2285,110 @@
     );
   }
 
-  function ingestRequiredPlannerHabits(apiRow) {
-    latestRequiredPlannerHabits = [];
+  function ingestMandatoryPlannerHabits(apiRow) {
+    latestMandatoryHabits = [];
     if (!apiRow || typeof apiRow !== "object") return;
-    const arr = apiRow.required_for_planner_date;
+    const arr = apiRow.mandatory_for_planner_date;
     if (!Array.isArray(arr)) return;
     for (let i = 0; i < arr.length; i++) {
-      const rh = arr[i];
-      if (!rh || typeof rh !== "object") continue;
-      const title = typeof rh.title === "string" ? rh.title.trim() : "";
-      const target = typeof rh.target_date === "string" ? rh.target_date.trim() : "";
-      if (!title || target !== focusDateIso) continue;
+      const row = arr[i];
+      if (!row || typeof row !== "object") continue;
+      const habitId = typeof row.habit_id === "string" ? row.habit_id.trim() : "";
+      const title = typeof row.title === "string" ? row.title.trim() : "";
+      const target =
+        typeof row.target_date === "string" ? row.target_date.trim() : "";
+      if (!habitId || !title || target !== focusDateIso) continue;
       const dm =
-        typeof rh.duration_minutes === "number" && rh.duration_minutes > 0
-          ? rh.duration_minutes
+        typeof row.duration_minutes === "number" && row.duration_minutes > 0
+          ? row.duration_minutes
           : 20;
-      const reason = typeof rh.reason === "string" ? rh.reason.trim() : "";
-      latestRequiredPlannerHabits.push({
-        title,
+      latestMandatoryHabits.push({
+        habit_id: habitId,
+        title: title,
         duration_minutes: dm,
-        reason,
         target_date: target,
+        logged: !!row.logged,
+        reason: typeof row.reason === "string" ? row.reason.trim() : "",
       });
+    }
+  }
+
+  function renderMandatoryHabits() {
+    if (!agendaHabitsList || !agendaHabitsSubhead) return;
+    const hasAny = latestMandatoryHabits.length > 0;
+    agendaHabitsSubhead.hidden = !hasAny;
+    agendaHabitsList.hidden = !hasAny;
+    if (!hasAny) {
+      agendaHabitsList.innerHTML = "";
+      return;
+    }
+    const cards = latestMandatoryHabits.map(function (row) {
+      return {
+        title: row.title,
+        start_label: row.logged ? "Logged" : "Due today",
+        duration_minutes: row.duration_minutes,
+        status: row.logged ? "done" : "pending",
+        habit_id: row.habit_id,
+        logged: row.logged,
+        habitDeadlineReason: row.reason,
+      };
+    });
+    renderTaskCards(agendaHabitsList, cards, "", {
+      allowHabitLogComplete: true,
+    });
+  }
+
+  async function markHabitLoggedOnCalendar(habitId) {
+    if (!habitId || habitLogInFlight) return;
+    habitLogInFlight = true;
+    statusEl.textContent = "Logging habit on calendar…";
+    try {
+      const r = await fetch("/api/habits", { cache: "no-store" });
+      if (!r.ok) {
+        statusEl.textContent = "Could not load habits (" + r.status + ").";
+        return;
+      }
+      const snap = await r.json().catch(() => null);
+      if (!snap || !Array.isArray(snap.habits)) {
+        statusEl.textContent = "Habits data unavailable.";
+        return;
+      }
+      let found = false;
+      for (let i = 0; i < snap.habits.length; i++) {
+        const h = snap.habits[i];
+        if (!h || typeof h !== "object" || h.id !== habitId) continue;
+        found = true;
+        if (!h.days || typeof h.days !== "object") h.days = {};
+        h.days[focusDateIso] = true;
+        break;
+      }
+      if (!found) {
+        statusEl.textContent = "Habit not found.";
+        return;
+      }
+      const up = await fetch("/api/habits", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snap),
+      });
+      if (!up.ok) {
+        const msg = await up.text().catch(() => "");
+        statusEl.textContent = "Could not save habit" + (msg ? ": " + msg : ".");
+        return;
+      }
+      const frame = document.getElementById("habits-frame");
+      if (frame && frame.contentWindow) {
+        frame.contentWindow.postMessage(
+          { source: "scheduler-shell", type: "habits-reload" },
+          window.location.origin,
+        );
+      }
+      await syncHabitsFromStorage();
+      statusEl.textContent = "Habit logged on calendar.";
+    } catch (e) {
+      statusEl.textContent = String(e && e.message ? e.message : e);
+    } finally {
+      habitLogInFlight = false;
     }
   }
 
@@ -2294,56 +2411,21 @@
       if (r.ok) {
         const row = await r.json().catch(() => null);
         if (row && Array.isArray(row.habits)) {
-          ingestRequiredPlannerHabits(row);
+          ingestMandatoryPlannerHabits(row);
           latestHabits = [];
           for (let i = 0; i < row.habits.length; i++) {
             const h = normalizeHabitShell(row.habits[i]);
             if (h) latestHabits.push(h);
           }
-          habitsHint.textContent =
-            latestHabits.length === 0
-              ? "Add habits in Habit Builder (left) · stored in SQLite when the shell server runs."
-              : "";
-          habitsHint.hidden = latestHabits.length > 0;
-          renderHabitsInAgenda(latestHabits);
-          refreshLlmSchedule(lastLlmPreview);
+          renderMandatoryHabits();
           return latestHabits;
         }
       }
     } catch (_) {}
-    latestRequiredPlannerHabits = [];
+    latestMandatoryHabits = [];
+    renderMandatoryHabits();
     latestHabits = await loadHabitsFromBuilderStorage();
-    renderHabitsInAgenda(latestHabits);
-    refreshLlmSchedule(lastLlmPreview);
     return latestHabits;
-  }
-
-  function renderHabitsInAgenda(habits) {
-    habitsUl.innerHTML = "";
-    const todayIso = localDateISO(new Date());
-    if (!habits.length) {
-      habitsHint.textContent =
-        "Add habits in the left panel — SQLite via Habit Builder when the UI server is running; otherwise IndexedDB/localStorage.";
-      habitsHint.hidden = false;
-      return;
-    }
-    habitsHint.hidden = true;
-    for (let i = 0; i < habits.length; i++) {
-      const h = habits[i];
-      const li = document.createElement("li");
-      const tit = document.createElement("span");
-      tit.className = "hb-title";
-      tit.textContent = h.title || "(untitled)";
-      li.appendChild(tit);
-      const meta = document.createElement("span");
-      meta.className = "hb-meta";
-      let bits = "";
-      if (h.start) bits += " · since " + h.start;
-      if (h.days && h.days[todayIso]) bits += " · logged today";
-      meta.textContent = bits;
-      li.appendChild(meta);
-      habitsUl.appendChild(li);
-    }
   }
 
   function buildHabitsBlockForModel(habits) {
@@ -2424,12 +2506,6 @@
     return String(content || "").trim();
   }
 
-  function parseDurationMinutes(label) {
-    const m = String(label || "").trim().match(/^(\d+)h(\d+)m$/);
-    if (!m) return 0;
-    return Number(m[1]) * 60 + Number(m[2]);
-  }
-
   /** Minute-of-day for labels like ``8:00 AM`` or ``2026-05-09 7:43 PM`` — matches scheduler_store.start_label_sort_minutes. */
   function startLabelSortMinutes(s) {
     const m = String(s || "")
@@ -2443,119 +2519,6 @@
     if (ap === "PM") hour24 = h === 12 ? 12 : h + 12;
     else hour24 = h === 12 ? 0 : h;
     return hour24 * 60 + mi;
-  }
-
-  function parseTasks(text, anchorIsoForUndated) {
-    const tasks = [];
-    for (const line of stripReasoningBlocks(text).split(/\r?\n/)) {
-      const probe = plannerLineNormalizedForTasks(line);
-      const m = probe.match(SCHED_LINE);
-      if (!m) continue;
-      const dateIso = m[1];
-      const time = m[2];
-      const title = m[3].trim();
-      const dur = m[4];
-      const planIso = dateIso ? dateIso : anchorIsoForUndated;
-      if (planIso !== focusDateIso) continue;
-      tasks.push({
-        start_label: time,
-        title,
-        duration_minutes: parseDurationMinutes(dur),
-        status: "suggested",
-      });
-    }
-    return tasks;
-  }
-
-  /** Same duplicate rule as addSuggestedTaskToSchedule POST merge. */
-  function savedRowMatchesSuggestedTask(savedRow, suggestion, dateIso) {
-    const title =
-      typeof suggestion.title === "string" ? suggestion.title.trim() : "";
-    const start =
-      typeof suggestion.start_label === "string"
-        ? suggestion.start_label.trim()
-        : "";
-    const dm =
-      typeof suggestion.duration_minutes === "number"
-        ? suggestion.duration_minutes
-        : 0;
-    return (
-      String(savedRow.title || "").trim() === title &&
-      String(savedRow.start_label || "").trim() === start &&
-      Number(savedRow.duration_minutes || 0) === dm &&
-      String(savedRow.plan_date || "") === dateIso
-    );
-  }
-
-  /** Guard concurrent add-suggestion merges (upsert replaces the whole day). */
-  let addSuggestedTaskInFlight = false;
-
-  async function addSuggestedTaskToSchedule(task) {
-    if (!task || addSuggestedTaskInFlight) return;
-    const title = typeof task.title === "string" ? task.title.trim() : "";
-    const start = typeof task.start_label === "string" ? task.start_label.trim() : "";
-    const dm = typeof task.duration_minutes === "number" ? task.duration_minutes : 0;
-    if (!title) return;
-
-    addSuggestedTaskInFlight = true;
-    refreshLlmSchedule(lastLlmPreview);
-    statusEl.textContent = "Adding to saved plan…";
-
-    try {
-      const r = await fetch("/api/tasks?date=" + encodeURIComponent(focusDateIso), {
-        cache: "no-store",
-      });
-      if (!r.ok) {
-        statusEl.textContent = "Could not load saved tasks (" + r.status + ").";
-        return;
-      }
-      const j = await r.json().catch(() => ({ tasks: [] }));
-      const existing = Array.isArray(j.tasks) ? j.tasks : [];
-
-      const isDup = existing.some(function (row) {
-        return savedRowMatchesSuggestedTask(row, task, focusDateIso);
-      });
-      if (isDup) {
-        statusEl.textContent = "Already on saved plan.";
-        return;
-      }
-
-      const payloadTasks = existing.map(function (row) {
-        return {
-          task_id: row.task_id,
-          plan_date: row.plan_date,
-          start_label: row.start_label,
-          duration_minutes: row.duration_minutes,
-          title: row.title,
-          status: row.status || "pending",
-        };
-      });
-      payloadTasks.push({
-        plan_date: focusDateIso,
-        start_label: start || "Anytime",
-        duration_minutes: dm,
-        title: title,
-        status: "pending",
-      });
-
-      const up = await fetch("/api/tasks/upsert", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tasks: payloadTasks }),
-      });
-      if (!up.ok) {
-        const msg = await up.text().catch(() => "");
-        statusEl.textContent = "Could not save task" + (msg ? ": " + msg : ".");
-        return;
-      }
-      statusEl.textContent = "Added to saved plan.";
-      await reloadDbAgenda();
-    } catch (e) {
-      statusEl.textContent = String(e && e.message ? e.message : e);
-    } finally {
-      addSuggestedTaskInFlight = false;
-      refreshLlmSchedule(lastLlmPreview);
-    }
   }
 
   async function markTaskCompleteViaLlm(task) {
@@ -2599,21 +2562,25 @@
 
   function renderTaskCards(container, tasks, emptyText, options) {
     const allowComplete = !!(options && options.allowComplete);
-    const allowAddToSchedule = !!(options && options.allowAddToSchedule);
-    const savedPlanTasksForDupCheck =
-      options && Array.isArray(options.savedPlanTasksForDupCheck)
-        ? options.savedPlanTasksForDupCheck
-        : null;
+    const allowHabitLogComplete = !!(options && options.allowHabitLogComplete);
     if (!container) return;
     container.innerHTML = "";
     if (!tasks.length) {
-      const div = document.createElement("div");
-      div.className = "empty-card";
-      div.textContent = emptyText;
-      container.appendChild(div);
+      if (emptyText) {
+        const div = document.createElement("div");
+        div.className = "empty-card";
+        div.textContent = emptyText;
+        container.appendChild(div);
+      }
       return;
     }
     const sorted = tasks.slice().sort(function (a, b) {
+      if (allowHabitLogComplete) {
+        const ad = a.logged ? 1 : 0;
+        const bd = b.logged ? 1 : 0;
+        if (ad !== bd) return ad - bd;
+        return String(a.title || "").localeCompare(String(b.title || ""));
+      }
       const ka = startLabelSortMinutes(a.start_label);
       const kb = startLabelSortMinutes(b.start_label);
       if (ka !== kb) return ka - kb;
@@ -2643,33 +2610,27 @@
       time.className = "task-time";
       time.textContent = task.start_label || "Anytime";
       top.appendChild(title);
-      if (allowAddToSchedule && status === "suggested") {
-        const dup =
-          savedPlanTasksForDupCheck &&
-          savedPlanTasksForDupCheck.some(function (row) {
-            return savedRowMatchesSuggestedTask(row, task, focusDateIso);
-          });
-        const addBtn = document.createElement("button");
-        addBtn.type = "button";
-        addBtn.className = "task-add-btn";
-        addBtn.textContent = "+";
-        if (dup) {
-          addBtn.title = "Already on saved plan";
-          addBtn.setAttribute(
-            "aria-label",
-            (task.title || "Task") + " is already on the saved plan",
-          );
-          addBtn.disabled = true;
-        } else {
-          addBtn.title = "Add to saved plan";
-          addBtn.setAttribute("aria-label", "Add " + (task.title || "task") + " to saved plan");
-          addBtn.disabled = addSuggestedTaskInFlight;
-          addBtn.addEventListener("click", function () {
-            if (addSuggestedTaskInFlight) return;
-            void addSuggestedTaskToSchedule(task);
-          });
-        }
-        actions.appendChild(addBtn);
+      if (
+        allowHabitLogComplete &&
+        !task.logged &&
+        task.habit_id &&
+        status === "pending"
+      ) {
+        const logBtn = document.createElement("button");
+        logBtn.type = "button";
+        logBtn.className = "task-complete-btn";
+        logBtn.textContent = "×";
+        logBtn.title = "Log on habit calendar";
+        logBtn.setAttribute(
+          "aria-label",
+          "Log " + (task.title || "habit") + " on the habit calendar",
+        );
+        logBtn.disabled = habitLogInFlight;
+        logBtn.addEventListener("click", function () {
+          logBtn.disabled = true;
+          void markHabitLoggedOnCalendar(task.habit_id);
+        });
+        actions.appendChild(logBtn);
       }
       actions.appendChild(time);
       if (allowComplete && status === "pending" && task.task_id) {
@@ -2696,99 +2657,17 @@
       meta.appendChild(dur);
       const stat = document.createElement("span");
       stat.className = "task-chip";
-      stat.textContent =
-        status === "suggested"
-          ? task.fromHabitSchedule
-            ? "habit deadline"
-            : "latest suggestion"
-          : status;
+      stat.textContent = allowHabitLogComplete
+        ? task.logged
+          ? "logged on calendar"
+          : "habit due"
+        : status;
       meta.appendChild(stat);
 
       card.appendChild(top);
       card.appendChild(meta);
       container.appendChild(card);
     }
-  }
-
-  /** Lower-case + collapsed-whitespace + punctuation-stripped form for habit/title compares. */
-  function canonicalActivityKey(s) {
-    return String(s || "")
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]+/gu, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  function isTaskAHabit(task) {
-    const tkey = canonicalActivityKey(task && task.title);
-    if (!tkey) return false;
-    for (let i = 0; i < latestHabits.length; i += 1) {
-      const hkey = canonicalActivityKey(latestHabits[i] && latestHabits[i].title);
-      if (!hkey) continue;
-      if (
-        tkey === hkey ||
-        tkey.startsWith(hkey + " ") ||
-        tkey.endsWith(" " + hkey) ||
-        tkey.indexOf(" " + hkey + " ") >= 0
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  function refreshLlmSchedule(assistantRaw) {
-    lastLlmPreview = typeof assistantRaw === "string" ? assistantRaw : "";
-    agendaList.innerHTML = "";
-    agendaFallback.hidden = true;
-    agendaFallback.textContent = "";
-
-    // All timetable bullets parsed for ``focusDateIso`` (meetings/work/etc.), not habits only —
-    // the previous habit-only UI hid legitimate future-day plans from Latest suggested plan.
-    const allParsedForFocusDay = parseTasks(
-      lastLlmPreview,
-      parseAnchorIsoForSuggestions()
-    );
-    const seenHabitTitleKeys = {};
-    let hk;
-    for (let i = 0; i < allParsedForFocusDay.length; i++) {
-      const t = allParsedForFocusDay[i];
-      if (!t || !isTaskAHabit(t)) continue;
-      hk = canonicalActivityKey(t.title);
-      if (hk) seenHabitTitleKeys[hk] = true;
-    }
-
-    const merged = [];
-    for (let j = 0; j < latestRequiredPlannerHabits.length; j++) {
-      const rh = latestRequiredPlannerHabits[j];
-      if (!rh || !rh.title) continue;
-      hk = canonicalActivityKey(rh.title);
-      if (!hk || seenHabitTitleKeys[hk]) continue;
-      seenHabitTitleKeys[hk] = true;
-      merged.push({
-        start_label: "Anytime",
-        title: rh.title,
-        duration_minutes:
-          typeof rh.duration_minutes === "number" && rh.duration_minutes > 0
-            ? rh.duration_minutes
-            : 20,
-        status: "suggested",
-        fromHabitSchedule: true,
-        habitDeadlineReason: typeof rh.reason === "string" ? rh.reason.trim() : "",
-      });
-    }
-    for (let p = 0; p < allParsedForFocusDay.length; p++) {
-      merged.push(allParsedForFocusDay[p]);
-    }
-
-    const emptyMsg =
-      latestHabits.length === 0
-        ? "Add habits in the left panel for habit deadlines here, or use chat — timetable lines dated for this day appear as suggestions."
-        : "No suggestions for this day yet. Send a planner chat with bullets dated for this day, or rely on habit deadlines above.";
-    renderTaskCards(agendaList, merged, emptyMsg, {
-      allowAddToSchedule: true,
-      savedPlanTasksForDupCheck: latestSavedPlanTasks,
-    });
   }
 
   function scrollChat() {
@@ -2855,7 +2734,6 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ thread_id: "default", messages: chatHistory }),
         }).catch(function () {});
-        refreshLlmSchedule("");
         statusEl.textContent = "(thread trimmed — edit and send)";
         refreshComposeStatus();
       });
@@ -3125,7 +3003,6 @@
           }
           persisted = true;
           assistantErr("Error: " + errMsg);
-          refreshLlmSchedule(fullAssistant);
           if (historyUpdated) rerenderChatFromHistory();
           void persistAssistantTurn(fullAssistant).catch(function () {});
           try {
@@ -3149,7 +3026,6 @@
           shell.body.textContent = assembled;
         }
 
-        refreshLlmSchedule(fullAssistant);
         if (historyUpdated) rerenderChatFromHistory();
 
         finishAssistantStatus(shell);
@@ -3195,7 +3071,6 @@
           shell.body.textContent = assembledRp;
         }
 
-        refreshLlmSchedule(fullAssistant);
         if (historyUpdated) rerenderChatFromHistory();
         if (typeof evt.reason === "string" && evt.reason) {
           statusEl.textContent = "Plan refined by fallback model: " + evt.reason;
@@ -3281,7 +3156,6 @@
             fullAssistant = streamedChat.trim();
             try {
               assistantMountMarkdown(shell.body, fullAssistant);
-              refreshLlmSchedule(fullAssistant);
               persisted = true;
               finishAssistantStatus(shell);
               void persistAssistantTurn(fullAssistant).catch(function () {});
@@ -3395,7 +3269,6 @@
         if (fallbackAssist) {
           try {
             assistantMountMarkdown(shell.body, fallbackAssist);
-            refreshLlmSchedule(fallbackAssist);
           } catch (_) {}
         }
         void persistAssistantTurn(fallbackAssist).catch(function () {});
@@ -3469,21 +3342,6 @@
     resetChatAndPreviewUi("(thread cleared)");
   });
 
-  function lastAssistantRawFromHistory() {
-    for (let i = chatHistory.length - 1; i >= 0; i--) {
-      const h = chatHistory[i];
-      if (
-        h &&
-        h.role === "assistant" &&
-        typeof h.content === "string" &&
-        h.content.trim()
-      ) {
-        return h.content;
-      }
-    }
-    return "";
-  }
-
   async function hydrateConversationFromServer() {
     try {
       const r = await fetch("/api/conversation?thread_id=default", { cache: "no-store" });
@@ -3500,7 +3358,6 @@
       });
       clearChatTranscript();
       rerenderChatFromHistory();
-      refreshLlmSchedule(lastAssistantRawFromHistory());
     } catch (_) {}
   }
 

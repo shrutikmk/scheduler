@@ -4,8 +4,15 @@
   window.addEventListener("message", function (ev) {
     if (ev.origin !== window.location.origin) return;
     const d = ev.data;
-    if (!d || d.source !== "scheduler-shell" || d.type !== "theme") return;
-    const t = d.theme === "dark" ? "dark" : "light";
+    if (!d || d.source !== "scheduler-shell") return;
+    if (d.type === "habits-reload") {
+      void loadInitialState();
+      return;
+    }
+    if (d.type !== "theme") return;
+    const t = window.HeartbeatTheme
+      ? window.HeartbeatTheme.normalizeTheme(d.theme)
+      : (d.theme === "dark" ? "dark" : "light");
     if (document.documentElement.dataset.theme !== t) {
       document.documentElement.dataset.theme = t;
     }
@@ -24,6 +31,8 @@
   const PHASE1_WEEKS_WORKNIGHT = 5;
   const PHASE1_MAX_POINTS_WORKNIGHT = 15; // 1+2+3+4+5
   const TOTAL_POINTS_WORKNIGHT = PHASE1_MAX_POINTS_WORKNIGHT + PHASE2_MAX_POINTS;
+  const DEFAULT_TIME_TARGET_MINUTES = 20;
+  const MAX_TIME_TARGET_MINUTES = 240;
 
   /** Show enough fractional digits that +1 point (~100/4095 %) is visible. */
   function formatProgressPct(pct) {
@@ -73,8 +82,20 @@
     for (const k of Object.keys(days)) {
       if (!days[k]) delete days[k];
     }
-    let habit_type =
-      typeof raw.habit_type === "string" && raw.habit_type === "worknight" ? "worknight" : "default";
+    let habit_type = "default";
+    let worknight_mode = false;
+    const rawType = typeof raw.habit_type === "string" ? raw.habit_type.trim().toLowerCase() : "default";
+    if (rawType === "worknight") {
+      habit_type = "default";
+      worknight_mode = true;
+    } else if (rawType === "time") {
+      habit_type = "time";
+    }
+    if (raw.worknight_mode) worknight_mode = true;
+    let time_target_minutes = DEFAULT_TIME_TARGET_MINUTES;
+    const rawN = raw.time_target_minutes;
+    const parsedN = typeof rawN === "number" ? rawN : parseInt(rawN, 10);
+    if (parsedN > 0) time_target_minutes = Math.min(MAX_TIME_TARGET_MINUTES, Math.max(1, parsedN));
     const cheat_days_raw =
       raw.cheat_days && typeof raw.cheat_days === "object" && !Array.isArray(raw.cheat_days)
         ? { ...raw.cheat_days }
@@ -84,7 +105,7 @@
       if (cheat_days_raw[k]) cheat_days[k] = true;
     }
     if (!id) return null;
-    return { id, title, start, days, habit_type, cheat_days };
+    return { id, title, start, days, habit_type, worknight_mode, time_target_minutes, cheat_days };
   }
 
   function migrateFromLocalStorage() {
@@ -129,7 +150,7 @@
     el.classList.toggle("muted", ok);
   }
 
-  /** @type {{ id: string, title: string, start: string, days: Record<string, boolean>, habit_type: string, cheat_days: Record<string, boolean> }[]} */
+  /** @type {{ id: string, title: string, start: string, days: Record<string, boolean>, habit_type: string, worknight_mode: boolean, time_target_minutes: number, cheat_days: Record<string, boolean> }[]} */
   let habits = [];
   /** @type {string | null} */
   let habitTypePopoverHabitId = null;
@@ -168,7 +189,9 @@
         title: h.title,
         start: h.start,
         days: { ...(h.days || {}) },
-        habit_type: h.habit_type === "worknight" ? "worknight" : "default",
+        habit_type: h.habit_type === "time" ? "time" : "default",
+        worknight_mode: !!h.worknight_mode,
+        time_target_minutes: timeTargetMinutes(h),
         cheat_days: { ...(h.cheat_days || {}) },
       })),
       selectedId,
@@ -375,7 +398,71 @@
   }
 
   function isWorknight(h) {
-    return h.habit_type === "worknight";
+    return !!h.worknight_mode;
+  }
+
+  function isTime(h) {
+    return h.habit_type === "time";
+  }
+
+  function timeTargetMinutes(h) {
+    const n = typeof h.time_target_minutes === "number" ? h.time_target_minutes : parseInt(h.time_target_minutes, 10);
+    return n > 0 ? Math.min(MAX_TIME_TARGET_MINUTES, Math.max(1, n)) : DEFAULT_TIME_TARGET_MINUTES;
+  }
+
+  function phase1MaxPointsTime(n) {
+    return (n * (n + 1)) / 2;
+  }
+
+  function totalPointsTime(n) {
+    return phase1MaxPointsTime(n) + PHASE2_MAX_POINTS;
+  }
+
+  /** First *n* program days from start (Sun–Thu only when worknight). */
+  function timeProgramDays(startISO, n, worknight) {
+    if (!startISO || n < 1) return [];
+    const out = [];
+    let cursor = worknight ? firstSunThruThuOnOrAfter(startISO) : startISO;
+    let guard = 0;
+    while (out.length < n && guard++ < 10000) {
+      if (!worknight || isSunThruThu(cursor)) out.push(cursor);
+      if (out.length >= n) break;
+      cursor = worknight ? nextSunThruThuAfter(cursor) : addDaysISO(cursor, 1);
+    }
+    return out;
+  }
+
+  function phase1StatsTime(startISO, marks, n, worknight) {
+    const programDays = timeProgramDays(startISO, n, worknight);
+    let phase1Earned = 0;
+    const markSet = new Set(marks);
+    for (let i = 0; i < programDays.length; i++) {
+      if (markSet.has(programDays[i])) phase1Earned += i + 1;
+    }
+    const phase1Satisfied = programDays.length === n && programDays.every((d) => markSet.has(d));
+    return { programDays, phase1Earned, phase1Satisfied };
+  }
+
+  function phase2BoundaryDateTime(startISO, marks, n, worknight) {
+    const { programDays, phase1Satisfied } = phase1StatsTime(startISO, marks, n, worknight);
+    if (!phase1Satisfied || !programDays.length) return null;
+    return programDays[programDays.length - 1];
+  }
+
+  function timePhase1DayIndex(programDays, targetISO) {
+    const idx = programDays.indexOf(targetISO);
+    return idx;
+  }
+
+  function targetMinutesForHabitDay(h, iso, derived) {
+    if (!isTime(h)) return null;
+    const n = timeTargetMinutes(h);
+    const worknight = isWorknight(h);
+    const { programDays } = phase1StatsTime(h.start, markedDates(h), n, worknight);
+    const idx = timePhase1DayIndex(programDays, iso);
+    if (idx >= 0 && !derived?.phase1Satisfied) return idx + 1;
+    if (derived?.journeyPhase === "phase2" || derived?.phase1Satisfied) return n;
+    return null;
   }
 
   function cheatDatesAsSet(h) {
@@ -452,6 +539,38 @@
     habitTypePopoverHabitId = null;
   }
 
+  function deleteHabitById(habitId) {
+    const wasSelected = selectedId === habitId;
+    habits = habits.filter((x) => x.id !== habitId);
+    if (wasSelected) selectedId = habits[0]?.id ?? null;
+    save();
+    closeHabitTypePopover();
+    render();
+  }
+
+  /** @returns {{ row: HTMLLabelElement, input: HTMLInputElement }} */
+  function createWorknightToggleRow(checked) {
+    const wnRow = document.createElement("label");
+    wnRow.className = "habit-settings-toggle-row";
+    const text = document.createElement("span");
+    text.className = "habit-ios-toggle-label";
+    text.textContent = "Worknight";
+    const sw = document.createElement("span");
+    sw.className = "habit-ios-switch";
+    const wnCheck = document.createElement("input");
+    wnCheck.type = "checkbox";
+    wnCheck.checked = !!checked;
+    wnCheck.setAttribute("aria-label", "Worknight mode");
+    const slider = document.createElement("span");
+    slider.className = "habit-ios-switch-slider";
+    slider.setAttribute("aria-hidden", "true");
+    sw.appendChild(wnCheck);
+    sw.appendChild(slider);
+    wnRow.appendChild(text);
+    wnRow.appendChild(sw);
+    return { row: wnRow, input: wnCheck };
+  }
+
   function openHabitTypePopover(habitId, anchorEl) {
     closeHabitTypePopover();
     const h = habits.find((x) => x.id === habitId);
@@ -493,40 +612,61 @@
     sel.setAttribute("aria-label", "Habit type");
     for (const opt of [
       { v: "default", t: "Default" },
-      { v: "worknight", t: "Worknight" },
+      { v: "time", t: "Time" },
     ]) {
       const o = document.createElement("option");
       o.value = opt.v;
       o.textContent = opt.t;
       sel.appendChild(o);
     }
-    sel.value = h.habit_type === "worknight" ? "worknight" : "default";
-    sel.addEventListener("change", () => {
-      h.habit_type = sel.value === "worknight" ? "worknight" : "default";
-      save();
-      closeHabitTypePopover();
-      render();
-    });
+    sel.value = h.habit_type === "time" ? "time" : "default";
 
-    const hint = document.createElement("p");
-    hint.className = "habit-type-modal-hint muted";
-    hint.textContent =
-      "Worknight: Phase 1 is 5 calendar weeks (Sun–Thu pressure; Fri/Sat optional). Tap the same calendar day twice quickly for a cheat freeze (max 2 per rolling 30 days).";
+    const timeTargetLabel = document.createElement("div");
+    timeTargetLabel.className = "habit-type-modal-title";
+    timeTargetLabel.textContent = "Target minutes (n)";
+
+    const timeTargetInput = document.createElement("input");
+    timeTargetInput.type = "number";
+    timeTargetInput.className = "habit-settings-name-input";
+    timeTargetInput.min = "1";
+    timeTargetInput.max = String(MAX_TIME_TARGET_MINUTES);
+    timeTargetInput.value = String(timeTargetMinutes(h));
+    timeTargetInput.setAttribute("aria-label", "Time habit target minutes");
+
+    const { row: wnRow, input: wnCheck } = createWorknightToggleRow(isWorknight(h));
+
+    function syncTimeTargetVisibility() {
+      const show = sel.value === "time";
+      timeTargetLabel.hidden = !show;
+      timeTargetInput.hidden = !show;
+    }
+    syncTimeTargetVisibility();
+    sel.addEventListener("change", syncTimeTargetVisibility);
 
     const actions = document.createElement("div");
     actions.className = "habit-type-modal-actions";
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "danger habit-type-modal-close";
+    deleteBtn.textContent = "Delete habit";
+    deleteBtn.addEventListener("click", () => deleteHabitById(habitId));
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "habit-type-modal-close";
     closeBtn.textContent = "Done";
     closeBtn.addEventListener("click", () => {
       const nextTitle = nameInput.value.trim();
-      if (nextTitle && nextTitle !== h.title) {
-        h.title = nextTitle;
-        save();
-        render();
+      if (nextTitle) h.title = nextTitle;
+      h.habit_type = sel.value === "time" ? "time" : "default";
+      h.worknight_mode = wnCheck.checked;
+      if (h.habit_type === "time") {
+        const parsed = parseInt(timeTargetInput.value, 10);
+        h.time_target_minutes =
+          parsed > 0 ? Math.min(MAX_TIME_TARGET_MINUTES, Math.max(1, parsed)) : DEFAULT_TIME_TARGET_MINUTES;
       }
+      save();
       closeHabitTypePopover();
+      render();
     });
 
     wrap.appendChild(head);
@@ -534,8 +674,191 @@
     wrap.appendChild(nameInput);
     wrap.appendChild(typeLabel);
     wrap.appendChild(sel);
-    wrap.appendChild(hint);
+    wrap.appendChild(timeTargetLabel);
+    wrap.appendChild(timeTargetInput);
+    wrap.appendChild(wnRow);
+    actions.appendChild(deleteBtn);
     actions.appendChild(closeBtn);
+    wrap.appendChild(actions);
+    backdrop.appendChild(wrap);
+    document.body.appendChild(backdrop);
+
+    const onBackdropMouseDown = (ev) => {
+      if (ev.target === backdrop) closeHabitTypePopover();
+    };
+    const onKey = (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeHabitTypePopover();
+      }
+    };
+    backdrop.addEventListener("mousedown", onBackdropMouseDown);
+    document.addEventListener("keydown", onKey, true);
+
+    requestAnimationFrame(() => {
+      nameInput.focus();
+    });
+
+    habitTypePopoverTeardown = () => {
+      backdrop.removeEventListener("mousedown", onBackdropMouseDown);
+      document.removeEventListener("keydown", onKey, true);
+      backdrop.remove();
+      if (anchorEl) {
+        anchorEl.setAttribute("aria-expanded", "false");
+      }
+    };
+    anchorEl.setAttribute("aria-expanded", "true");
+  }
+
+  function openAddHabitPopover(anchorEl) {
+    closeHabitTypePopover();
+    const backdrop = document.createElement("div");
+    backdrop.className = "habit-type-modal-backdrop";
+    backdrop.setAttribute("role", "presentation");
+    backdrop.tabIndex = -1;
+
+    const wrap = document.createElement("div");
+    wrap.className = "habit-type-modal-panel";
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.setAttribute("aria-labelledby", "add-habit-modal-title");
+
+    const head = document.createElement("div");
+    head.id = "add-habit-modal-title";
+    head.className = "habit-type-modal-title";
+    head.textContent = "Add habit";
+
+    const nameLabel = document.createElement("div");
+    nameLabel.className = "habit-type-modal-title";
+    nameLabel.textContent = "Habit name";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "habit-settings-name-input";
+    nameInput.setAttribute("aria-label", "Habit name");
+    nameInput.placeholder = "Habit title";
+    nameInput.maxLength = 120;
+
+    const typeLabel = document.createElement("div");
+    typeLabel.className = "habit-type-modal-title";
+    typeLabel.textContent = "Habit type";
+
+    const sel = document.createElement("select");
+    sel.className = "habit-type-select";
+    sel.setAttribute("aria-label", "Habit type");
+    for (const opt of [
+      { v: "default", t: "Default" },
+      { v: "time", t: "Time" },
+    ]) {
+      const o = document.createElement("option");
+      o.value = opt.v;
+      o.textContent = opt.t;
+      sel.appendChild(o);
+    }
+
+    const timeTargetLabel = document.createElement("div");
+    timeTargetLabel.className = "habit-type-modal-title";
+    timeTargetLabel.textContent = "Target minutes (n)";
+
+    const timeTargetInput = document.createElement("input");
+    timeTargetInput.type = "number";
+    timeTargetInput.className = "habit-settings-name-input";
+    timeTargetInput.min = "1";
+    timeTargetInput.max = String(MAX_TIME_TARGET_MINUTES);
+    timeTargetInput.value = String(DEFAULT_TIME_TARGET_MINUTES);
+    timeTargetInput.setAttribute("aria-label", "Time habit target minutes");
+
+    const startLabel = document.createElement("div");
+    startLabel.className = "habit-type-modal-title";
+    startLabel.textContent = "Program start";
+
+    const startInput = document.createElement("input");
+    startInput.type = "date";
+    startInput.className = "habit-settings-name-input";
+    startInput.value = todayISO();
+    startInput.setAttribute(
+      "aria-label",
+      "Program start date (week 1 is the Sunday–Saturday week containing this date)",
+    );
+
+    const { row: wnRow, input: wnCheck } = createWorknightToggleRow(false);
+
+    function syncTimeTargetVisibility() {
+      const show = sel.value === "time";
+      timeTargetLabel.hidden = !show;
+      timeTargetInput.hidden = !show;
+    }
+    syncTimeTargetVisibility();
+    sel.addEventListener("change", syncTimeTargetVisibility);
+
+    const actions = document.createElement("div");
+    actions.className = "habit-type-modal-actions";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "habit-type-modal-close";
+    cancelBtn.textContent = "Cancel";
+
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "primary-button";
+    addBtn.textContent = "Add habit";
+
+    function submitAdd() {
+      const title = nameInput.value.trim();
+      if (!title) {
+        nameInput.focus();
+        return;
+      }
+      const startVal = (startInput.value && startInput.value.trim()) || todayISO();
+      const habit_type = sel.value === "time" ? "time" : "default";
+      let time_target_minutes = DEFAULT_TIME_TARGET_MINUTES;
+      if (habit_type === "time") {
+        const parsed = parseInt(timeTargetInput.value, 10);
+        time_target_minutes =
+          parsed > 0 ? Math.min(MAX_TIME_TARGET_MINUTES, Math.max(1, parsed)) : DEFAULT_TIME_TARGET_MINUTES;
+      }
+      const h = {
+        id: uuid(),
+        title,
+        start: startVal,
+        days: {},
+        habit_type,
+        worknight_mode: wnCheck.checked,
+        time_target_minutes,
+        cheat_days: {},
+      };
+      habits.push(h);
+      selectedId = h.id;
+      const t = new Date();
+      viewYear = t.getFullYear();
+      viewMonth = t.getMonth();
+      save();
+      closeHabitTypePopover();
+      render();
+    }
+
+    cancelBtn.addEventListener("click", () => closeHabitTypePopover());
+    addBtn.addEventListener("click", submitAdd);
+    nameInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        submitAdd();
+      }
+    });
+
+    wrap.appendChild(head);
+    wrap.appendChild(nameLabel);
+    wrap.appendChild(nameInput);
+    wrap.appendChild(typeLabel);
+    wrap.appendChild(sel);
+    wrap.appendChild(timeTargetLabel);
+    wrap.appendChild(timeTargetInput);
+    wrap.appendChild(startLabel);
+    wrap.appendChild(startInput);
+    wrap.appendChild(wnRow);
+    actions.appendChild(cancelBtn);
+    actions.appendChild(addBtn);
     wrap.appendChild(actions);
     backdrop.appendChild(wrap);
     document.body.appendChild(backdrop);
@@ -1761,6 +2084,7 @@
   }
 
   function deriveHabit(h) {
+    if (isTime(h)) return deriveHabitTime(h);
     if (isWorknight(h)) return deriveHabitWorknight(h);
     const marks = markedDates(h);
     const marksSet = new Set(marks);
@@ -2003,6 +2327,334 @@
       nominalRestDays,
       nominalRestISOList,
       programState,
+    };
+  }
+
+  function nextHabitDayPhase1Time(programDays, marksSet, todayStr) {
+    for (const pd of programDays) {
+      if (marksSet.has(pd)) continue;
+      let priorOk = true;
+      const idx = programDays.indexOf(pd);
+      for (let i = 0; i < idx; i++) {
+        if (!marksSet.has(programDays[i])) {
+          priorOk = false;
+          break;
+        }
+      }
+      if (!priorOk) continue;
+      return { iso: pd, backlog: daysDiff(todayStr, pd) > 0 };
+    }
+    return null;
+  }
+
+  function deriveHabitTime(h) {
+    const n = timeTargetMinutes(h);
+    const totalPts = totalPointsTime(n);
+    const phase1Cap = phase1MaxPointsTime(n);
+    const worknight = isWorknight(h);
+    const marks = markedDates(h);
+    const marksSet = new Set(marks);
+    const cheatSet = cheatDatesAsSet(h);
+    const cheatFrozenSuns = cheatFrozenSundaySet(h);
+    const { programDays, phase1Earned, phase1Satisfied } = phase1StatsTime(
+      h.start,
+      marks,
+      n,
+      worknight
+    );
+
+    const boundary = phase1Satisfied
+      ? phase2BoundaryDateTime(h.start, marks, n, worknight)
+      : null;
+    const maxISO = maxDerivedScanISO(h, boundary);
+    let phase2Earned = 0;
+    let strictPct = (100 * phase1Earned) / totalPts;
+    let forgivingPct = (100 * phase1Earned) / totalPts;
+    let strictComplete = false;
+    let forgivingPhase2Pts = 0;
+    let forgivingComplete = false;
+    let sim = null;
+    let restDays = new Set();
+
+    if (boundary !== null) {
+      if (worknight) {
+        sim = simulatePhase2Worknight(boundary, marksSet, maxISO, cheatFrozenSuns);
+        phase2Earned = sim.phase2Earned;
+        strictComplete = sim.complete;
+        if (!sim.violation) {
+          strictPct = (100 * (phase1Earned + phase2Earned)) / totalPts;
+          if (strictComplete) strictPct = 100;
+        } else {
+          strictPct = (100 * (phase1Earned + phase2Earned)) / totalPts;
+        }
+        const f = simulatePhase2ForgivingWorknight(boundary, marksSet);
+        forgivingPhase2Pts = f.forgivingPhase2Pts;
+        forgivingComplete = f.forgivingComplete;
+        forgivingPhase2Pts = Math.max(forgivingPhase2Pts, phase2Earned);
+        forgivingPct = (100 * (phase1Earned + forgivingPhase2Pts)) / totalPts;
+        if (forgivingComplete) forgivingPct = 100;
+        restDays = deriveRestDaySetWorknight(boundary, marksSet, cheatFrozenSuns, h.start);
+      } else {
+        sim = simulatePhase2(boundary, marksSet, maxISO);
+        phase2Earned = sim.phase2Earned;
+        strictComplete = sim.complete;
+        if (!sim.violation) {
+          strictPct = (100 * (phase1Earned + phase2Earned)) / totalPts;
+          if (strictComplete) strictPct = 100;
+        } else {
+          strictPct = (100 * (phase1Earned + phase2Earned)) / totalPts;
+        }
+        const f = simulatePhase2Forgiving(boundary, marksSet);
+        forgivingPhase2Pts = f.forgivingPhase2Pts;
+        forgivingComplete = f.forgivingComplete;
+        forgivingPhase2Pts = Math.max(forgivingPhase2Pts, phase2Earned);
+        forgivingPct = (100 * (phase1Earned + forgivingPhase2Pts)) / totalPts;
+        if (forgivingComplete) forgivingPct = 100;
+        restDays = deriveRestDaySet(boundary, marksSet, h.start);
+      }
+    }
+
+    const phase2StartISO =
+      boundary !== null
+        ? worknight
+          ? firstSunThruThuOnOrAfter(addDaysISO(boundary, 1))
+          : addDaysISO(boundary, 1)
+        : null;
+    const nominalRestISOList =
+      phase2StartISO && !worknight ? nominalPhase2RestDates(phase2StartISO) : [];
+    const nominalRestDays = new Set(nominalRestISOList);
+
+    const programDone = Boolean(strictComplete || forgivingComplete);
+    const today = todayISO();
+    const tomorrow = addDaysISO(today, 1);
+    const phase2LegUiDayISO = marksSet.has(today) ? tomorrow : today;
+    let journeyPhase = "phase1";
+    if (programDone) journeyPhase = "done";
+    else if (phase1Satisfied && boundary !== null) journeyPhase = "phase2";
+
+    let nominalLegProgress = null;
+    if (
+      journeyPhase === "phase2" &&
+      boundary !== null &&
+      phase2StartISO &&
+      !worknight &&
+      !(sim && sim.violation)
+    ) {
+      nominalLegProgress = phase2LegProgressFromNominalRests(phase2StartISO, marksSet, today);
+    }
+
+    let longRunLegLabel = null;
+    let longRunLegDetail = null;
+    let longRunLegCounter = null;
+    if (worknight && journeyPhase === "phase2" && boundary !== null) {
+      const stLeg = stateAtStartOfDayWorknightForgiving(
+        boundary,
+        marksSet,
+        phase2LegUiDayISO,
+        cheatFrozenSuns,
+        h.start
+      );
+      longRunLegCounter = longRunLegCounterFromState(stLeg);
+      const leg = longRunLegFromState(stLeg);
+      longRunLegLabel = leg.label;
+      longRunLegDetail = leg.detail;
+      if (stLeg.violation) {
+        longRunLegLabel = null;
+        longRunLegDetail = null;
+        longRunLegCounter = null;
+      }
+    } else if (nominalLegProgress) {
+      longRunLegLabel = nominalLegProgress.label;
+      longRunLegCounter = nominalLegProgress.counter;
+    }
+
+    let status = "";
+    const todayTargetMin =
+      journeyPhase === "phase1"
+        ? (() => {
+            const idx = timePhase1DayIndex(programDays, today);
+            return idx >= 0 ? idx + 1 : null;
+          })()
+        : n;
+    const p2StatusPrefix =
+      journeyPhase === "phase2" && longRunLegLabel
+        ? `Phase 2 · ${longRunLegLabel} · ${n} min · `
+        : journeyPhase === "phase2"
+          ? `Phase 2 · ${n} min · `
+          : "";
+
+    if (!phase1Satisfied) {
+      let dayUi = 0;
+      for (let i = 0; i < programDays.length; i++) {
+        if (!marksSet.has(programDays[i])) {
+          dayUi = i;
+          break;
+        }
+      }
+      const need = dayUi + 1;
+      const done = programDays.slice(0, need).filter((d) => marksSet.has(d)).length;
+      const wnNote = worknight ? " (Sun–Thu program days)" : "";
+      status = `Phase 1 · Day ${need} of ${n} · ${done}/${need} logged · target ${need} min${wnNote}.`;
+    } else if (boundary === null) {
+      status = "Phase 1 complete (boundary error)";
+    } else if (programDone) {
+      status = forgivingComplete && !strictComplete
+        ? `Complete — Progress track. Long-run ladder may stay below 100%. Phase 2 target was ${n} min/day.`
+        : strictComplete
+          ? `Complete — Long-run Phase 2 ladder finished (${n} min/day).`
+          : "Complete.";
+    } else if (sim && sim.violation) {
+      status = worknight
+        ? "Phase 2 (Long run): you logged on a required rest night. Fix rests to advance the Long-run bar."
+        : "Phase 2 (Long run): you logged on a required rest day. Fix rests to advance the Long-run bar.";
+    } else if (sim && worknight) {
+      status = `${p2StatusPrefix}Long run: ${n} min per active night; streak ${sim.run}/${sim.targetL}. Progress bar uses your latest contiguous streak.`;
+    } else if (sim) {
+      const stEod = stateAtStartOfDayForgiving(boundary, marksSet, phase2LegUiDayISO, h.start);
+      if (stEod.needRest) {
+        status = `${p2StatusPrefix}Leave the next calendar day unchecked (rest). After rest, next leg at ${n} min/day.`;
+      } else {
+        status = `${p2StatusPrefix}Long run: ${n} min/day; streak ${stEod.run}/${stEod.targetL} (through end of today).`;
+      }
+    }
+
+    let nextRestLabel = "—";
+    let nextHabitLabel = "—";
+    let nextHabitISO = null;
+    let nextRestScheduledISO = null;
+
+    if (daysDiff(today, h.start) > 0) {
+      nextHabitISO = h.start;
+      nextHabitLabel = `${formatScheduleDay(h.start)} (habit hasn’t started)`;
+      nextRestLabel = "— (streak rests start in phase 2)";
+    } else if (!phase1Satisfied) {
+      const nh = nextHabitDayPhase1Time(programDays, marksSet, today);
+      nextRestLabel = "— (phase 1 has no rest days)";
+      if (nh) {
+        const mins = timePhase1DayIndex(programDays, nh.iso) + 1;
+        nextHabitISO = nh.iso;
+        nextHabitLabel = nh.backlog
+          ? `${formatScheduleDay(nh.iso)} · ${mins} min — catch up`
+          : `${formatScheduleDay(nh.iso)} · ${mins} min`;
+      }
+    } else if (programDone) {
+      nextRestLabel = "None (finished)";
+      nextHabitLabel = "None (finished)";
+    } else if (sim && sim.violation) {
+      nextRestLabel = "—";
+      nextHabitLabel = "—";
+    } else if (worknight) {
+      let nr = nextRestFromSet(restDays, today);
+      if (!nr)
+        nr = nextNeedRestStartISOWorknight(boundary, marksSet, today, cheatFrozenSuns, h.start);
+      nextRestScheduledISO = nr;
+      nextRestLabel = nr ? `${formatScheduleDay(nr)} (leave unchecked)` : "—";
+      const nh = nextHabitDayPhase2Worknight(
+        boundary,
+        marksSet,
+        today,
+        programDone,
+        cheatFrozenSuns,
+        h.start
+      );
+      if (nh) {
+        nextHabitISO = nh;
+        nextHabitLabel =
+          daysDiff(today, nh) === 0
+            ? `${formatScheduleDay(nh)} · ${n} min (today)`
+            : `${formatScheduleDay(nh)} · ${n} min`;
+      }
+    } else {
+      let nr = nextRestFromSet(restDays, today);
+      if (!nr) nr = nextNeedRestStartISO(boundary, marksSet, today, h.start);
+      if (!nr) nr = nextProjectedRestISO(boundary, marksSet, today, h.start);
+      nextRestScheduledISO = nr;
+      nextRestLabel = nr ? `${formatScheduleDay(nr)} (leave unchecked)` : "—";
+      const nh = nextHabitDayPhase2(boundary, marksSet, today, programDone, h.start);
+      if (nh) {
+        nextHabitISO = nh;
+        nextHabitLabel =
+          daysDiff(today, nh) === 0
+            ? `${formatScheduleDay(nh)} · ${n} min (today)`
+            : `${formatScheduleDay(nh)} · ${n} min`;
+      }
+    }
+
+    const pct = Math.min(100, Math.max(0, forgivingPct));
+    const phaseSlug =
+      journeyPhase === "done" ? "done" : journeyPhase === "phase2" ? "phase2" : "phase1";
+    let curTarget = nominalLegProgress?.targetLen ?? null;
+    let curRun = nominalLegProgress?.run ?? null;
+
+    const programState = {
+      phase: phaseSlug,
+      anchor_iso: today,
+      habit_type: "time",
+      time_target_minutes: n,
+      worknight_mode: worknight,
+      phase1: {
+        program_days: programDays.slice(),
+        satisfied: phase1Satisfied,
+        current_day_ui_index: Math.max(
+          0,
+          programDays.findIndex((d) => !marksSet.has(d))
+        ),
+        points_earned: phase1Earned,
+        points_cap: phase1Cap,
+      },
+      phase2:
+        boundary !== null && phase2StartISO
+          ? {
+              boundary_iso: boundary,
+              phase2_start_iso: phase2StartISO,
+              nominal_rest_dates: nominalRestISOList.slice(),
+              strict: {
+                violation: Boolean(sim && sim.violation),
+                complete: strictComplete,
+                earned_points: phase2Earned,
+              },
+              forgiving: {
+                points: forgivingPhase2Pts,
+                complete: forgivingComplete,
+              },
+              effective_next_rest_iso: nextRestScheduledISO,
+              current_leg_target_len: curTarget,
+              current_leg_run_start_of_tomorrow: curRun,
+              time_target_minutes: n,
+            }
+          : null,
+    };
+
+    return {
+      phase1Earned,
+      phase2Earned,
+      forgivingPhase2Pts,
+      pct,
+      strictPct: Math.min(100, Math.max(0, strictPct)),
+      forgivingPct: Math.min(100, Math.max(0, forgivingPct)),
+      strictComplete,
+      forgivingComplete,
+      programDone,
+      status,
+      complete: programDone,
+      boundary,
+      phase1Satisfied,
+      restDays,
+      sim,
+      nextRestLabel,
+      nextHabitLabel,
+      nextHabitISO,
+      nextRestScheduledISO,
+      journeyPhase,
+      longRunLegLabel,
+      longRunLegDetail,
+      longRunLegCounter,
+      phase1PointsCap: phase1Cap,
+      nominalRestDays,
+      nominalRestISOList,
+      programState,
+      timeTargetMinutes: n,
+      todayTargetMin,
     };
   }
 
@@ -2356,38 +3008,39 @@
       li.setAttribute("tabindex", "0");
       li.setAttribute("aria-pressed", h.id === selectedId ? "true" : "false");
       if (h.id === selectedId) li.classList.add("active");
-      const left = document.createElement("div");
-      left.className = "habit-li-main";
-      const titleRow = document.createElement("div");
-      titleRow.className = "habit-li-title-row";
+      li.classList.add("habit-card");
+
+      const nameCol = document.createElement("div");
+      nameCol.className = "habit-card-name";
       const titleEl = document.createElement("span");
       titleEl.className = "habit-title";
       titleEl.textContent = h.title || "(untitled)";
-      const gearBtn = document.createElement("button");
-      gearBtn.type = "button";
-      gearBtn.className = "habit-gear-btn";
-      gearBtn.setAttribute("aria-label", "Habit settings");
-      gearBtn.setAttribute("aria-haspopup", "dialog");
-      gearBtn.setAttribute("aria-expanded", "false");
-      gearBtn.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
-      gearBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        if (habitTypePopoverHabitId === h.id) closeHabitTypePopover();
-        else openHabitTypePopover(h.id, gearBtn);
-      });
-      titleRow.appendChild(titleEl);
-      titleRow.appendChild(gearBtn);
+      const meta = document.createElement("div");
+      meta.className = "habit-card-meta muted";
       const d = deriveHabit(h);
-      const meta = document.createElement("span");
-      meta.className = "muted habit-li-meta";
       const n = markedDates(h).length;
-      meta.textContent = `${habitListNextLogClause(d)} · ${n} day(s) logged${isWorknight(h) ? " · Worknight" : ""}`;
-      left.appendChild(titleRow);
-      left.appendChild(meta);
-      li.appendChild(left);
+      const metaNext = document.createElement("span");
+      metaNext.className = "habit-card-meta-line";
+      metaNext.textContent = habitListNextLogClause(d);
+      const metaDays = document.createElement("span");
+      metaDays.className = "habit-card-meta-line";
+      metaDays.textContent = `${n} day${n === 1 ? "" : "s"} logged`;
+      meta.appendChild(metaNext);
+      meta.appendChild(metaDays);
+      if (isTime(h) || isWorknight(h)) {
+        const metaTags = document.createElement("span");
+        metaTags.className = "habit-card-meta-line habit-card-meta-tags";
+        const tags = [];
+        if (isTime(h)) tags.push(`Time · ${timeTargetMinutes(h)}m`);
+        if (isWorknight(h)) tags.push("Worknight");
+        metaTags.textContent = tags.join(" · ");
+        meta.appendChild(metaTags);
+      }
+      nameCol.appendChild(titleEl);
+      nameCol.appendChild(meta);
+
       const progress = document.createElement("div");
-      progress.className = "habit-progress";
+      progress.className = "habit-card-progress";
       const stack = document.createElement("div");
       stack.className = "habit-progress-rows";
       function habitMiniRow(fillClassName, pctVal) {
@@ -2409,7 +3062,24 @@
       stack.appendChild(habitMiniRow("strict-mini", d.strictPct));
       progress.title = "Progress track (accent) vs Long-run track (green)";
       progress.appendChild(stack);
+
+      const gearBtn = document.createElement("button");
+      gearBtn.type = "button";
+      gearBtn.className = "habit-gear-btn";
+      gearBtn.setAttribute("aria-label", "Habit settings");
+      gearBtn.setAttribute("aria-haspopup", "dialog");
+      gearBtn.setAttribute("aria-expanded", "false");
+      gearBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+      gearBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (habitTypePopoverHabitId === h.id) closeHabitTypePopover();
+        else openHabitTypePopover(h.id, gearBtn);
+      });
+
+      li.appendChild(nameCol);
       li.appendChild(progress);
+      li.appendChild(gearBtn);
       const selectHabit = () => {
         if (selectedId === h.id) {
           selectedId = null;
@@ -2443,9 +3113,13 @@
     detail.hidden = false;
     document.getElementById("detail-title").textContent = h.title;
     const detailStart = document.getElementById("detail-start-input");
+    const detailStartDisplay = document.getElementById("detail-start-display");
     detailStart.value = h.start;
     detailStart.disabled = false;
-    detailStart.title = isWorknight(h)
+    if (detailStartDisplay) detailStartDisplay.textContent = formatScheduleDay(h.start);
+    detailStart.title = isTime(h)
+      ? `Time habit: Phase 1 ramps 1→${timeTargetMinutes(h)} min over ${timeTargetMinutes(h)} program days${isWorknight(h) ? " (Sun–Thu only)" : ""}.`
+      : isWorknight(h)
       ? "Worknight Phase 1: five calendar weeks (Sun–Thu drive deadlines; Fri/Sat optional). Week 1 contains program start."
       : "Phase 1 weeks are Sun–Sat; week 1 is the calendar week that contains this date. Your first log must be this date or later.";
     const derived = deriveHabit(h);
@@ -2509,13 +3183,24 @@
     const ps = derived.programState;
     const todayStr = todayISO();
 
-    if (!isWorknight(h) && ps?.phase2?.phase2_start_iso && derived.journeyPhase !== "done") {
+    if (!isWorknight(h) && !isTime(h) && ps?.phase2?.phase2_start_iso && derived.journeyPhase !== "done") {
       const rowP2 = document.createElement("div");
       const sp = document.createElement("strong");
       sp.textContent = "Phase 2 start";
       rowP2.appendChild(sp);
       rowP2.appendChild(
         document.createTextNode(` · ${formatScheduleDay(ps.phase2.phase2_start_iso)} (Leg 8 day 1)`)
+      );
+      upcoming.appendChild(rowP2);
+    } else if (isTime(h) && !isWorknight(h) && ps?.phase2?.phase2_start_iso && derived.journeyPhase !== "done") {
+      const rowP2 = document.createElement("div");
+      const sp = document.createElement("strong");
+      sp.textContent = "Phase 2 start";
+      rowP2.appendChild(sp);
+      rowP2.appendChild(
+        document.createTextNode(
+          ` · ${formatScheduleDay(ps.phase2.phase2_start_iso)} (Leg 8 · ${timeTargetMinutes(h)} min/day)`
+        )
       );
       upcoming.appendChild(rowP2);
     } else if (isWorknight(h) && ps?.phase2?.phase2_start_iso && derived.journeyPhase !== "done") {
@@ -2562,13 +3247,6 @@
     const label = document.getElementById("cal-label");
     label.textContent = first.toLocaleString(undefined, { month: "long", year: "numeric" });
 
-    const legDef = document.getElementById("cal-legend-default");
-    const legWn = document.getElementById("cal-legend-worknight");
-    if (legDef && legWn) {
-      legDef.hidden = isWorknight(h);
-      legWn.hidden = !isWorknight(h);
-    }
-
     const root = document.getElementById("cal-root");
     root.innerHTML = "";
     const dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -2590,6 +3268,10 @@
       const cell = document.createElement("div");
       cell.className = adjacentMonth ? "cell other" : "cell";
       cell.textContent = String(displayNum);
+      if (isTime(h)) {
+        const mins = targetMinutesForHabitDay(h, iso, derived);
+        if (mins != null) cell.title = `${mins} min target`;
+      }
       const done = !!h.days[iso];
       if (done) cell.classList.add("done");
       const beforeStart = daysDiff(h.start, iso) < 0;
@@ -2677,29 +3359,13 @@
     renderDetail();
   }
 
-  document.getElementById("add-habit").addEventListener("click", () => {
-    const inp = document.getElementById("title-input");
-    const title = inp.value.trim();
-    if (!title) return;
-    const startEl = document.getElementById("start-input");
-    const startVal = (startEl.value && startEl.value.trim()) || todayISO();
-    const h = { id: uuid(), title, start: startVal, days: {}, habit_type: "default", cheat_days: {} };
-    habits.push(h);
-    selectedId = h.id;
-    inp.value = "";
-    const t = new Date();
-    viewYear = t.getFullYear();
-    viewMonth = t.getMonth();
-    save();
-    render();
-  });
-
-  document.getElementById("delete-habit").addEventListener("click", () => {
-    if (!selectedId) return;
-    habits = habits.filter((x) => x.id !== selectedId);
-    selectedId = habits[0]?.id ?? null;
-    save();
-    render();
+  const openAddHabitBtn = document.getElementById("open-add-habit");
+  openAddHabitBtn.addEventListener("click", () => {
+    if (habitTypePopoverTeardown && openAddHabitBtn.getAttribute("aria-expanded") === "true") {
+      closeHabitTypePopover();
+    } else {
+      openAddHabitPopover(openAddHabitBtn);
+    }
   });
 
   document.getElementById("cal-prev").addEventListener("click", () => {
@@ -2730,18 +3396,12 @@
     render();
   });
 
-  document.getElementById("title-input").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") document.getElementById("add-habit").click();
-  });
-
   window.addEventListener("pagehide", flushBackupSync);
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushBackupSync();
   });
 
   (async function init() {
-    const startField = document.getElementById("start-input");
-    if (startField) startField.value = todayISO();
     try {
       await loadInitialState();
       setStorageStatus(

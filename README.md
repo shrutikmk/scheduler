@@ -88,7 +88,10 @@ Open the **Scheduler** at `/` and **Finances** at `/finances` on the same server
 The day-scheduler app keeps the local agenda **bidirectionally** synced with one Google Calendar:
 
 - Tasks the LLM creates (today **or** future dates) are pushed as Calendar events.
-- Edits and completions update the linked event; soft-deleted rows delete the event.
+- After assistant import or task upsert, each affected plan date is **rebuilt** on the
+  synced calendar: all events overlapping that local day are removed, then current SQLite
+  tasks for that day are pushed as fresh events (same overlap delete as **Clear day**).
+- Single-task status changes (done / pending) patch the linked event without a full-day wipe.
 - Events created on Google are pulled into the SQLite store (incremental `events.list`
   with `syncToken`) and rendered on the day-schedule pane.
 

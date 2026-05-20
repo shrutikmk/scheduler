@@ -879,6 +879,29 @@ class SchedulerStore:
             )
             return [dict(r) for r in cur.fetchall()]
 
+    def reset_gcal_links_for_plan_dates(self, dates: list[str]) -> int:
+        """Clear Calendar links for active tasks on ``dates`` and mark them for push."""
+        import time
+
+        if not dates:
+            return 0
+        uniq = sorted(set(dates))
+        now = int(time.time() * 1000)
+        with self._lock:
+            cn = self._connection()
+            cur = cn.execute(
+                f"""
+                UPDATE schedule_tasks
+                SET gcal_event_id = NULL, gcal_etag = NULL, gcal_calendar_id = NULL,
+                    gcal_dirty = 1, updated_at = ?
+                WHERE plan_date IN ({",".join(["?"] * len(uniq))})
+                  AND COALESCE(gcal_deleted, 0) = 0
+                """,
+                [now, *uniq],
+            )
+            cn.commit()
+            return int(cur.rowcount or 0)
+
     def attach_gcal_event(
         self,
         *,

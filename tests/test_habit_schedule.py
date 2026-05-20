@@ -9,6 +9,7 @@ from habit_schedule import (
     derive_habit_program_state,
     habits_snapshot_with_required_rows,
     latest_phase1_deadline_iso,
+    mandatory_habits_for_planner_date,
     nominal_phase2_rest_dates,
     non_required_habits_context_block,
     required_habits_context_block,
@@ -24,6 +25,8 @@ def habit(
     *,
     duration_minutes: int | None = None,
     habit_type: str | None = None,
+    worknight_mode: bool | None = None,
+    time_target_minutes: int | None = None,
     cheat_days: dict[str, bool] | None = None,
 ) -> dict:
     h = {
@@ -36,6 +39,10 @@ def habit(
         h["duration_minutes"] = duration_minutes
     if habit_type is not None:
         h["habit_type"] = habit_type
+    if worknight_mode is not None:
+        h["worknight_mode"] = worknight_mode
+    if time_target_minutes is not None:
+        h["time_target_minutes"] = time_target_minutes
     if cheat_days is not None:
         h["cheat_days"] = cheat_days
     return h
@@ -58,6 +65,91 @@ def _worknight_phase1_minimal_days(start_iso: str) -> dict[str, bool]:
             if added >= need:
                 break
     return out
+
+
+def test_worknight_worknight_mode_equivalent_to_legacy_type() -> None:
+    snap_legacy = {"habits": [habit("Sleep", "2026-05-04", {}, habit_type="worknight")]}
+    snap_toggle = {
+        "habits": [habit("Sleep", "2026-05-04", {}, habit_type="default", worknight_mode=True)]
+    }
+    assert required_habits_for_date(snap_legacy, "2026-05-07") == required_habits_for_date(
+        snap_toggle, "2026-05-07"
+    )
+
+
+def test_time_phase1_day_k_requires_k_minutes() -> None:
+    snap = {
+        "habits": [
+            habit("Meditate", "2026-05-19", {}, habit_type="time", time_target_minutes=5)
+        ]
+    }
+    reqs = required_habits_for_date(snap, "2026-05-19")
+    assert len(reqs) == 1
+    assert reqs[0].duration_minutes == 1
+    assert "time phase 1 day 1/5" in reqs[0].reason
+    assert "1 min" in reqs[0].reason
+
+
+def test_time_phase1_worknight_skips_saturday() -> None:
+    snap = {
+        "habits": [
+            habit(
+                "Focus",
+                "2026-05-15",
+                {},
+                habit_type="time",
+                time_target_minutes=5,
+                worknight_mode=True,
+            )
+        ]
+    }
+    assert required_habits_for_date(snap, "2026-05-16") == []
+
+
+def test_time_phase2_rest_day_not_required() -> None:
+    start = "2026-01-04"
+    n = 5
+    days = {d: True for d in habit_schedule._time_program_days(start, n, False)}
+    boundary = habit_schedule._phase2_boundary_date_time(start, sorted(days.keys()), n, False)
+    assert boundary is not None
+    first_p2 = date.fromisoformat(boundary) + timedelta(days=1)
+    for offset in range(8):
+        days[(first_p2 + timedelta(days=offset)).isoformat()] = True
+    snap = {
+        "habits": [
+            habit("Read", start, days, habit_type="time", time_target_minutes=n)
+        ]
+    }
+    rest_day = (first_p2 + timedelta(days=8)).isoformat()
+    assert required_habits_for_date(snap, rest_day) == []
+
+
+def test_time_phase2_streak_requires_n_minutes() -> None:
+    start = "2026-01-04"
+    n = 20
+    days = {d: True for d in habit_schedule._time_program_days(start, n, False)}
+    snap = {
+        "habits": [
+            habit("Read", start, days, habit_type="time", time_target_minutes=n)
+        ]
+    }
+    boundary = habit_schedule._phase2_boundary_date_time(start, sorted(days.keys()), n, False)
+    assert boundary is not None
+    first_p2 = (date.fromisoformat(boundary) + timedelta(days=1)).isoformat()
+    reqs = required_habits_for_date(snap, first_p2)
+    assert len(reqs) == 1
+    assert reqs[0].duration_minutes == n
+    assert "time phase 2 streak day" in reqs[0].reason
+
+
+def test_derive_habit_program_state_time_phase1() -> None:
+    h = habit("Timer", "2026-05-19", {}, habit_type="time", time_target_minutes=10)
+    st = derive_habit_program_state(h, anchor_iso="2026-05-20")
+    assert st["phase"] == "phase1"
+    assert st["habit_type"] == "time"
+    assert st["time_target_minutes"] == 10
+    assert st["phase1"]["points_cap"] == 55
+    assert st["phase1"]["current_day_ui_index"] == 0
 
 
 def test_worknight_phase1_requires_sun_thru_thu_but_not_sat() -> None:
@@ -141,6 +233,28 @@ def test_already_logged_and_before_start_are_not_required() -> None:
 
     assert required_habits_for_date(logged, "2026-05-09") == []
     assert required_habits_for_date(before_start, "2026-05-09") == []
+
+
+def test_mandatory_for_planner_includes_pending_and_logged() -> None:
+    due = "2026-05-09"
+    snapshot = {"habits": [habit("10k steps", "2026-05-03")]}
+    pending = mandatory_habits_for_planner_date(snapshot, due)
+    assert len(pending) == 1
+    assert pending[0]["logged"] is False
+    assert pending[0]["habit_id"] == "10k-steps"
+
+    logged_snap = {"habits": [habit("10k steps", "2026-05-03", {due: True})]}
+    assert required_habits_for_date(logged_snap, due) == []
+    logged_rows = mandatory_habits_for_planner_date(logged_snap, due)
+    assert len(logged_rows) == 1
+    assert logged_rows[0]["logged"] is True
+
+
+def test_habits_snapshot_includes_mandatory_for_planner_date() -> None:
+    snapshot = {"habits": [habit("10k steps", "2026-05-03")]}
+    out = habits_snapshot_with_required_rows(snapshot, "2026-05-09")
+    assert isinstance(out["mandatory_for_planner_date"], list)
+    assert len(out["mandatory_for_planner_date"]) == 1
 
 
 def test_phase2_rest_day_not_required() -> None:
