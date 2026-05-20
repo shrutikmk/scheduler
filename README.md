@@ -1,12 +1,28 @@
-# scheduler
+# scheduler (Heartbeat)
 
-Local scheduling workspace: a **day-planner chat** on **vLLM Metal**, a **Habit Builder** panel, and prompts for calendar-style planning.
+Local-first workspace for **day planning**, **habit tracking**, and **personal finances**. The browser shell (**Heartbeat**) runs on your machine; the planner chat uses a **vLLM Metal** server (OpenAI-compatible API) on **Qwen3-14B**. Habits, saved tasks, chat history, and optional Google Calendar sync live in **SQLite** under `data/` (gitignored).
+
+## What you get in the UI
+
+Open **`http://127.0.0.1:8765/`** after starting the web server (see below).
+
+| Area | Route / location | Purpose |
+|------|------------------|---------|
+| **Habits** | Scheduler, left column | Habit Builder (programs, calendar, progress bars). Data syncs to SQLite when the UI server runs. |
+| **Planner** | Scheduler, center column | Per-day **saved plan** (tasks in SQLite), **habits due today** (mandatory log days from habit rules), date navigation, **Clear day**. |
+| **Chat** | Scheduler, right column | Day-planner assistant; streams timetable replies validated by the LLM gateway. |
+| **Settings** | ☰ menu, top-right | Theme (auto / morning / afternoon / night), LLM API status, Google Calendar connect + **Sync now**. |
+| **Finances** | `/finances` | CSV upload, ledger, charts, optional LLM labels/insights (same server process). |
+
+**Themes:** Shared **morning / afternoon / night** palettes via `app/heartbeat_theme.css` and `app/heartbeat_theme.js` (auto follows local time unless you pick a fixed theme in Settings).
+
+**Habits ↔ planner:** `GET /api/habits?required_for_date=YYYY-MM-DD` returns `mandatory_for_planner_date` (habit id, title, logged flag). The planner shows due habits as cards; **×** logs the day on the habit calendar (same as clicking the cell in Habit Builder).
 
 ## Requirements
 
 - Python **3.12+**
 - [uv](https://docs.astral.sh/uv/) for dependencies
-- **vLLM Metal** ([vllm-metal](https://github.com/vllm-project/vllm-metal)): one OpenAI-compatible server (**Qwen3-14B**) for scheduler chat, summarization inside long threads, insights, labels, repair, and query parsing. Set `VLLM_14B_BASE_URL`. Legacy `VLLM_8B_*` env vars are ignored.
+- **vLLM Metal** ([vllm-metal](https://github.com/vllm-project/vllm-metal)): OpenAI-compatible server for **Qwen3-14B** (scheduler chat, summarization, repair, query parsing, financial labels). Set `VLLM_14B_BASE_URL`. Legacy `VLLM_8B_*` env vars are ignored.
 
 ## Install
 
@@ -16,125 +32,140 @@ uv sync
 uv sync --group samples-vllm
 ```
 
-Optional Google Calendar OAuth sample CLI also uses `samples-google-calendar` (and tokenizer helpers share `samples-vllm`):
+Google Calendar sample CLI (optional):
 
 ```bash
 uv sync --group samples-vllm --group samples-google-calendar
 ```
 
-Download the scheduler model (and tokenizer) locally:
+Download the scheduler model locally (recommended path `~/models`):
 
 ```bash
 mkdir -p ~/models
 export HF_HOME="$HOME/models/.hf-cache"
 hf download Qwen/Qwen3-14B --local-dir "$HOME/models/Qwen3-14B"
-# Optional — faster bookkeeping labels / plain-completion client hints:
-# hf download Qwen/Qwen3-8B --local-dir "$HOME/models/Qwen3-8B"
 ```
 
-## Run the browser shell (recommended)
+## Run locally
 
-Use **two or more terminals**: the LLM runs in a separate gateway process; the UI proxies chat to it.
+You need **vLLM inference**, the **LLM gateway**, and the **web UI**. Ports default to **8000** (vLLM), **8766** (gateway), **8765** (UI).
 
-**Terminal 0 — Qwen3-14B inference**
+### Option A — one script (recommended)
 
 ```bash
-vllm serve "$HOME/models/Qwen3-14B" --port 8000 \
-  --served-model-name Qwen3-14B
+./scripts/scheduler-local-stack.sh start    # background
+./scripts/scheduler-local-stack.sh status
+./scripts/scheduler-local-stack.sh logs     # tail logs
+# open http://127.0.0.1:8765/
+./scripts/scheduler-local-stack.sh stop
 ```
 
-The OpenAI `model` string must match `--served-model-name` (gateway default when unset: `Qwen3-14B`).
+Set `SCHEDULER_SKIP_VLLM=1` if vLLM is already running elsewhere. See script header for `SCHEDULER_VLLM_PORT`, `SCHEDULER_GATEWAY_PORT`, `SCHEDULER_WEB_PORT`, and wait timeouts.
+
+### Option B — manual terminals
+
+**Terminal 0 — Qwen3-14B (vLLM)**
+
+```bash
+vllm serve "$HOME/models/Qwen3-14B" --port 8000 --served-model-name Qwen3-14B
+```
+
+The OpenAI `model` name must match `--served-model-name` (gateway default: `Qwen3-14B`).
 
 **Terminal 1 — LLM gateway**
 
 ```bash
 export VLLM_14B_BASE_URL=http://127.0.0.1:8000/v1
-# Optional if your served name differs:
-# export VLLM_14B_MODEL=Qwen3-14B
-
 ./scripts/run-llm-gateway-local-models.sh
 ```
 
-**Check vLLM before the gateway:**
+Probe vLLM before the gateway:
 
-`uv run --group samples-vllm python app/scheduler_llm_gateway.py --diagnose-only`  
-Exit code **0** means vLLM answered with HTTP &lt; 500 on at least one probe URL (usually `GET …/v1/models`).
+```bash
+uv run --group samples-vllm python app/scheduler_llm_gateway.py --diagnose-only
+```
 
-Environment overrides (optional): `SCHEDULER_MODEL`, `MLX_MODEL` (tokenizer id), `HF_HOME`.
+Exit code **0** means vLLM responded on at least one probe URL (usually `GET …/v1/models`).
 
-The gateway validates timetable format, can run an optional self-grade pass, and optional **format repair** (`SCHEDULER_FORMAT_REPAIR`, default on).
+Optional env: `SCHEDULER_MODEL`, `MLX_MODEL` (tokenizer id), `HF_HOME`, `VLLM_14B_MODEL`.
 
-### Latency knobs
-
-The two settings with the largest effect on per-turn wall time on Qwen3-14B:
+The gateway validates timetable bullets, optional **format repair** (`SCHEDULER_FORMAT_REPAIR`, default on), and optional self-grade (`MLX_DAY_SCHEDULER_SELF_GRADE=1` or `--self-grade`, off by default).
 
 | Knob | Default | Effect |
 |------|---------|--------|
-| `MLX_DAY_SCHEDULER_NO_THINKING=1` (or `--no-day-scheduler-thinking`) | thinking **on** | Disables Qwen3's hidden think pass; replies are faster and far less variable (the variability is mostly thinking-token count). Schedules tend to be slightly less self-checked. |
-| `MLX_DAY_SCHEDULER_SELF_GRADE=1` (or `--self-grade`) | grader **off** | Re-enables the second LLM grader call after a structurally-valid reply. Adds wall time since it adds another completion. Off by default since structural validation + format-repair already cover the common breakage classes. |
+| `MLX_DAY_SCHEDULER_NO_THINKING=1` | thinking **on** | Faster, less variable replies (skips Qwen3 hidden think pass). |
+| `MLX_DAY_SCHEDULER_SELF_GRADE=1` | grader **off** | Second LLM pass after a valid timetable (slower). |
 
-The UI proxy caches the gateway `/health` probe for ~5 s, so repeated chats don't pay an extra round-trip per turn.
+The UI caches gateway `/health` for ~5 s per chat turn.
 
-**Terminal 2 — static shell + habits (default `http://127.0.0.1:8765/`) + Finances (`/finances`):**
+**Terminal 2 — web shell**
 
 ```bash
 uv run python app/day_scheduler_web.py
 ```
 
-Open the **Scheduler** at `/` and **Finances** at `/finances` on the same server. The UI talks to the gateway at `http://127.0.0.1:8766` unless you set `MLX_SCHEDULER_LLM_API`. A standalone finances-only server is also available: `uv run python app/financial_analytics_ui.py` (default port **8770**).
+- **Scheduler:** `http://127.0.0.1:8765/`
+- **Finances:** `http://127.0.0.1:8765/finances`
 
-### Google Calendar sync (live)
+Chat is proxied to `http://127.0.0.1:8766` unless you set `MLX_SCHEDULER_LLM_API`.
 
-The day-scheduler app keeps the local agenda **bidirectionally** synced with one Google Calendar:
+Standalone finances-only server (optional): `uv run python app/financial_analytics_ui.py` (default port **8770**).
 
-- Tasks the LLM creates (today **or** future dates) are pushed as Calendar events.
-- After assistant import or task upsert, each affected plan date is **rebuilt** on the
-  synced calendar: all events overlapping that local day are removed, then current SQLite
-  tasks for that day are pushed as fresh events (same overlap delete as **Clear day**).
+## Google Calendar sync
+
+Bidirectional sync with **one** Google calendar when enabled from **Settings → Connect Calendar**:
+
+- LLM-created tasks (today or future) become calendar events.
+- After assistant import or task upsert, each affected **plan date** is **rebuilt** on the calendar: overlapping events that day are removed, then current SQLite tasks for that day are pushed (same overlap logic as **Clear day**).
 - Single-task status changes (done / pending) patch the linked event without a full-day wipe.
-- Events created on Google are pulled into the SQLite store (incremental `events.list`
-  with `syncToken`) and rendered on the day-schedule pane.
+- Events created in Google are pulled incrementally (`syncToken`) into SQLite and appear on the saved plan.
 
-Drop the OAuth Desktop client JSON at `credentials/google-calendar-oauth-client.json`,
-launch the UI server, then click **Connect Calendar** in the chat header. The first
-click opens a browser for consent; subsequent boots refresh silently. Override the
-poll interval with `--gcal-poll-sec` (set to `0` to disable) and the secrets path with
-`--gcal-client-secrets` / `GOOGLE_CALENDAR_CLIENT_SECRETS`.
+**Setup**
+
+1. Create a Google Cloud **Desktop** OAuth client.
+2. Save JSON as `credentials/google-calendar-oauth-client.json` (gitignored; only `credentials/.gitkeep` is tracked).
+3. Start the UI server, open **☰ Settings**, click **Connect Calendar** (browser consent on first connect).
+4. Use **Sync now** or rely on background polling (`--gcal-poll-sec`, default on; `0` disables).
+
+Overrides: `--gcal-client-secrets`, `GOOGLE_CALENDAR_CLIENT_SECRETS`, `--gcal-token-dir`, `--gcal-poll-sec`.
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /api/calendar/status` | Connection state, calendar id, last sync timestamp, last error. |
-| `POST /api/calendar/auth` | Run the (blocking) OAuth flow and enable polling. Body: `{"calendar_id": "primary"}`. |
-| `POST /api/calendar/sync` | Trigger one push + incremental pull cycle on demand. |
-| `POST /api/calendar/disable` | Stop syncing (token cache is preserved). |
+| `GET /api/calendar/status` | Connection state, calendar id, last sync, errors. |
+| `POST /api/calendar/auth` | OAuth flow + enable polling. Body: `{"calendar_id": "primary"}`. |
+| `POST /api/calendar/sync` | One push + incremental pull. |
+| `POST /api/calendar/disable` | Stop syncing (token cache kept). |
 
-## Layout
+## Data & secrets (local only)
 
-The combined day-scheduler product lives under [`app/`](app/). Earlier exploratory CLIs and reference helpers stay under [`samples/`](samples/).
+| Path | Notes |
+|------|--------|
+| `data/scheduler.sqlite` | Habits, per-day tasks, conversation, GCal sync metadata (gitignored). |
+| `financial-data/ledger.sqlite` | Finances ledger (gitignored). |
+| `credentials/*.json` | OAuth client secrets (gitignored). |
+| `~/.config/scheduler/calendar/` | Default OAuth token cache. |
+| `prompts/financial-spend-knowledge.md` | Optional private spend hints for LLM titling (gitignored; copy from `prompts/financial-spend-knowledge.example.md`). |
+
+## Project layout
+
+Product code lives under [`app/`](app/). Exploratory CLIs stay under [`samples/`](samples/).
 
 | Path | Role |
 |------|------|
-| [`scripts/run-llm-gateway-local-models.sh`](scripts/run-llm-gateway-local-models.sh) | Starts LLM gateway (requires `VLLM_14B_BASE_URL`) |
-| [`app/scheduler_llm_gateway.py`](app/scheduler_llm_gateway.py) | LLM gateway process (vLLM OpenAI API) |
-| [`app/scheduler_llm_http_handler.py`](app/scheduler_llm_http_handler.py) | Gateway HTTP handler: validation, format-repair, streaming chat |
-| [`app/vllm_openai_client.py`](app/vllm_openai_client.py) | OpenAI-compatible client for vLLM servers |
-| [`app/vllm_gateway_routing.py`](app/vllm_gateway_routing.py) | vLLM URL, diagnose probe, plain-completion route helper |
-| [`app/day_scheduler_web.py`](app/day_scheduler_web.py) | Serves Scheduler `/`, Finances `/finances`, `day_scheduler.html` / `habit_builder.html`, proxies `/chat` |
-| [`app/financial_analytics_ui.py`](app/financial_analytics_ui.py) | Financial analytics APIs + ledger background jobs (merged into the shell server) |
-| [`app/financial_analytics.html`](app/financial_analytics.html) | Finances page (charts, CSV upload) |
-| [`app/day_scheduler.html`](app/day_scheduler.html) | Three-column shell: habits iframe, agenda, chat |
-| [`app/habit_builder.html`](app/habit_builder.html) | Habit-builder pane embedded in the shell |
-| [`app/scheduler_store.py`](app/scheduler_store.py) | SQLite persistence (habits, tasks, conversation, GCal sync state) |
-| [`app/google_calendar_sync.py`](app/google_calendar_sync.py) | Bidirectional Google Calendar sync manager (push dirty rows + incremental pull) |
-| [`app/schedule_parse.py`](app/schedule_parse.py) | Strict timetable parsing + validation |
-| [`app/day_scheduler_pipeline.py`](app/day_scheduler_pipeline.py) | Shared day-scheduler prompt/context compression and vLLM generation helpers |
-| [`app/local_model_hints.py`](app/local_model_hints.py) | Local snapshot sanity checks + context limits (tokenizer) |
-| [`app/response_quality.py`](app/response_quality.py) | Self-grade JSON parsing + similarity helpers |
-| [`app/habit_schedule.py`](app/habit_schedule.py) | Habit-recurrence helpers |
-| [`prompts/day-scheduler-system.md`](prompts/day-scheduler-system.md) | System prompt for day-scheduler mode |
-| [`samples/google_calendar_cli.py`](samples/google_calendar_cli.py) | Google Calendar CLI exploration (OAuth + `/push`) |
-
-Place the Google Cloud **Desktop** OAuth JSON at **`credentials/google-calendar-oauth-client.json`** (tracked path for the folder; the JSON itself is gitignored). Override with `--client-secrets` or `GOOGLE_CALENDAR_CLIENT_SECRETS`.
+| [`scripts/scheduler-local-stack.sh`](scripts/scheduler-local-stack.sh) | Start/stop vLLM + gateway + UI together |
+| [`scripts/run-llm-gateway-local-models.sh`](scripts/run-llm-gateway-local-models.sh) | Start LLM gateway only |
+| [`app/day_scheduler_web.py`](app/day_scheduler_web.py) | Heartbeat HTTP server: Scheduler, Finances, `/api/*`, `/chat` proxy |
+| [`app/day_scheduler.html`](app/day_scheduler.html) | Three-column Scheduler UI |
+| [`app/habit_builder.html`](app/habit_builder.html) + [`habit_builder.js`](app/habit_builder.js) | Habit Builder (embedded iframe) |
+| [`app/habit_schedule.py`](app/habit_schedule.py) | Habit deadlines + `mandatory_for_planner_date` for the planner |
+| [`app/heartbeat_theme.js`](app/heartbeat_theme.js) | Shared theme paint + iframe `postMessage` |
+| [`app/heartbeat_shell.css`](app/heartbeat_shell.css) | Shell nav, date controls, settings drawer |
+| [`app/scheduler_llm_gateway.py`](app/scheduler_llm_gateway.py) | LLM gateway (vLLM) |
+| [`app/scheduler_llm_http_handler.py`](app/scheduler_llm_http_handler.py) | Validation, format-repair, streaming chat |
+| [`app/scheduler_store.py`](app/scheduler_store.py) | SQLite persistence |
+| [`app/google_calendar_sync.py`](app/google_calendar_sync.py) | Calendar push/pull |
+| [`app/financial_analytics_ui.py`](app/financial_analytics_ui.py) | Finances APIs (also mounted on shell server) |
+| [`prompts/day-scheduler-system.md`](prompts/day-scheduler-system.md) | Day-planner system prompt |
 
 ## Checks
 
@@ -145,4 +176,4 @@ uv run pytest
 
 ## License
 
-See repository files; add a `LICENSE` if you publish this project publicly.
+No license file in the repo yet; add one if you publish publicly.
